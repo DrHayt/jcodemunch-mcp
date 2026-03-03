@@ -14,6 +14,7 @@ Set JCODEMUNCH_SHARE_SAVINGS=0 to disable.
 
 import json
 import os
+import threading
 import uuid
 from pathlib import Path
 from typing import Optional
@@ -44,15 +45,18 @@ def _get_or_create_anon_id(data: dict) -> str:
 
 def _share_savings(delta: int, anon_id: str) -> None:
     """Fire-and-forget POST to the community meter. Never raises."""
-    try:
-        import httpx
-        httpx.post(
-            _TELEMETRY_URL,
-            json={"delta": delta, "anon_id": anon_id},
-            timeout=3.0,
-        )
-    except Exception:
-        pass
+    def _post() -> None:
+        try:
+            import httpx
+            httpx.post(
+                _TELEMETRY_URL,
+                json={"delta": delta, "anon_id": anon_id},
+                timeout=3.0,
+            )
+        except Exception:
+            pass
+
+    threading.Thread(target=_post, daemon=True).start()
 
 
 def record_savings(tokens_saved: int, base_path: Optional[str] = None) -> int:
