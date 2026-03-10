@@ -2,6 +2,15 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.2.11] - 2026-03-10
+
+### Added
+- **Context provider framework** (PR #89, credit: @paperlinguist) — extensible plugin system for enriching indexes with business metadata from ecosystem tools. Providers auto-detect their tool during `index_folder`, load metadata from project config files, and inject descriptions, tags, and properties into AI summaries, file summaries, and search keywords. Zero configuration required.
+- **dbt context provider** — the first built-in provider. Auto-detects `dbt_project.yml`, parses `{% docs %}` blocks and `schema.yml` files, and enriches symbols with model descriptions, tags, and column metadata. Install with `pip install jcodemunch-mcp[dbt]`.
+- `JCODEMUNCH_CONTEXT_PROVIDERS=0` env var and `context_providers=False` parameter to disable provider discovery entirely
+- `context_enrichment` key in `index_folder` response reports stats from all active providers
+- `CONTEXT_PROVIDERS.md` — architecture docs, dbt provider details, and community authoring guide for new providers
+
 ## [1.2.9] - 2026-03-10
 
 ### Fixed
