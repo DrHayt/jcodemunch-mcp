@@ -14,6 +14,7 @@ import httpx
 logger = logging.getLogger(__name__)
 
 from ..parser import parse_file, LANGUAGE_EXTENSIONS, get_language_for_path
+from ..parser.imports import extract_imports
 from ..security import is_secret_file, is_binary_extension, get_max_index_files, get_extra_ignore_patterns, SKIP_PATTERNS
 from ..storage import IndexStore
 from ..summarizer import summarize_symbols, generate_file_summaries
@@ -418,6 +419,16 @@ async def index_repo(
             incr_file_summaries = _complete_file_summaries(sorted(files_to_parse), incr_symbols_map)
             incr_file_languages = _file_languages_for_paths(sorted(files_to_parse), incr_symbols_map)
 
+            # Build import graph for changed/new files
+            incr_file_imports: dict[str, list[dict]] = {}
+            for path in files_to_parse:
+                content = current_files[path]
+                language = get_language_for_path(path)
+                if language:
+                    imps = extract_imports(content, path, language)
+                    if imps:
+                        incr_file_imports[path] = imps
+
             updated = store.incremental_save(
                 owner=owner, name=repo,
                 changed_files=changed, new_files=new, deleted_files=deleted,
@@ -426,6 +437,7 @@ async def index_repo(
                 file_summaries=incr_file_summaries,
                 file_languages=incr_file_languages,
                 git_head=current_tree_sha,
+                imports=incr_file_imports,
             )
 
             result = {
@@ -483,6 +495,15 @@ async def index_repo(
         languages = _language_counts(file_languages)
         file_summaries = _complete_file_summaries(source_file_list, file_symbols_map)
 
+        # Build import graph
+        file_imports: dict[str, list[dict]] = {}
+        for path, content in current_files.items():
+            language = get_language_for_path(path)
+            if language:
+                imps = extract_imports(content, path, language)
+                if imps:
+                    file_imports[path] = imps
+
         # Save index
         # Track hashes for all discovered source files so incremental change detection
         # does not repeatedly report no-symbol files as "new".
@@ -503,6 +524,7 @@ async def index_repo(
             file_languages=file_languages,
             display_name=repo,
             git_head=current_tree_sha,
+            imports=file_imports,
         )
 
         result = {

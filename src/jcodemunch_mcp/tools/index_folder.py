@@ -16,6 +16,7 @@ logger = logging.getLogger(__name__)
 
 from ..parser import parse_file, LANGUAGE_EXTENSIONS, get_language_for_path
 from ..parser.context import discover_providers, enrich_symbols, ContextProvider
+from ..parser.imports import extract_imports
 from ..summarizer import generate_file_summaries
 from ..security import (
     validate_path,
@@ -457,6 +458,16 @@ def index_folder(
             incr_file_summaries = _complete_file_summaries(sorted(files_to_parse), incr_symbols_map, context_providers=active_providers)
             incr_file_languages = _file_languages_for_paths(sorted(files_to_parse), incr_symbols_map)
 
+            # Build import graph for changed/new files
+            incr_file_imports: dict[str, list[dict]] = {}
+            for rel_path in files_to_parse:
+                content = current_files[rel_path]
+                language = get_language_for_path(rel_path)
+                if language:
+                    imps = extract_imports(content, rel_path, language)
+                    if imps:
+                        incr_file_imports[rel_path] = imps
+
             git_head = _get_git_head(folder_path) or ""
 
             updated = store.incremental_save(
@@ -467,6 +478,7 @@ def index_folder(
                 git_head=git_head,
                 file_summaries=incr_file_summaries,
                 file_languages=incr_file_languages,
+                imports=incr_file_imports,
             )
 
             result = {
@@ -532,6 +544,15 @@ def index_folder(
         languages = _language_counts(file_languages)
         file_summaries = _complete_file_summaries(source_file_list, file_symbols_map, context_providers=active_providers)
 
+        # Build import graph
+        file_imports: dict[str, list[dict]] = {}
+        for rel_path, content in current_files.items():
+            language = get_language_for_path(rel_path)
+            if language:
+                imps = extract_imports(content, rel_path, language)
+                if imps:
+                    file_imports[rel_path] = imps
+
         # Save index
         # Track hashes for all discovered source files so incremental change detection
         # does not repeatedly report no-symbol files as "new".
@@ -552,6 +573,7 @@ def index_folder(
             source_root=str(folder_path),
             file_languages=file_languages,
             display_name=folder_path.name,
+            imports=file_imports,
         )
 
         result = {
