@@ -237,19 +237,31 @@ class SQLiteIndexStore:
 
     def _content_dir(self, owner: str, name: str) -> Path:
         """Path to raw content directory."""
-        raise NotImplementedError
+        return self.base_path / self._repo_slug(owner, name)
 
     def _safe_content_path(self, content_dir: Path, relative_path: str) -> Optional[Path]:
         """Resolve a content path and ensure it stays within content_dir."""
-        raise NotImplementedError
+        try:
+            base = content_dir.resolve()
+            candidate = (content_dir / relative_path).resolve()
+            if os.path.commonpath([str(base), str(candidate)]) != str(base):
+                return None
+            return candidate
+        except (OSError, ValueError):
+            return None
 
     def _write_cached_text(self, path: Path, content: str) -> None:
         """Write cached text without newline translation."""
-        raise NotImplementedError
+        with open(path, "w", encoding="utf-8", newline="") as f:
+            f.write(content)
 
     def _read_cached_text(self, path: Path) -> Optional[str]:
         """Read cached text without newline normalization."""
-        raise NotImplementedError
+        try:
+            with open(path, "r", encoding="utf-8", errors="replace", newline="") as f:
+                return f.read()
+        except OSError:
+            return None
 
     # ── Internal helpers ────────────────────────────────────────────
 
