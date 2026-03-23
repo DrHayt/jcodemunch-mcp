@@ -631,7 +631,7 @@ async def list_tools() -> list[Tool]:
         ),
         Tool(
             name="get_symbol_diff",
-            description="Diff the symbol sets of two indexed repositories (or two branches indexed separately). Shows added, removed, and changed symbols using content_hash for change detection. Index the same repo under two names to compare branches.",
+            description="Diff the symbol sets of two indexed repositories (or two branches). Shows added, removed, and changed symbols using content_hash for change detection. Branch diff workflow: (1) on branch A run index_folder repo=owner/repo-main, (2) checkout branch B run index_folder repo=owner/repo-feature, (3) call get_symbol_diff repo_a=owner/repo-main repo_b=owner/repo-feature.",
             inputSchema={
                 "type": "object",
                 "properties": {

@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from ..storage import IndexStore, record_savings, estimate_savings, cost_avoided
+from ..parser.imports import resolve_specifier
 from ._utils import resolve_repo
 
 
@@ -62,6 +63,22 @@ def get_repo_outline(
             raw_bytes += os.path.getsize(content_dir / f)
         except OSError:
             pass
+    # Most-imported files: count in-degree from import graph (PageRank-lite)
+    most_imported: list = []
+    if index.imports is not None:
+        in_degree: Counter = Counter()
+        source_files_set = frozenset(index.source_files)
+        for src_file, file_imports in index.imports.items():
+            for imp in file_imports:
+                target = resolve_specifier(imp["specifier"], src_file, source_files_set)
+                if target and target != src_file:
+                    in_degree[target] += 1
+        most_imported = [
+            {"file": f, "imported_by": c}
+            for f, c in in_degree.most_common(10)
+            if c > 1
+        ]
+
     payload_content = {
         "repo": f"{owner}/{name}",
         "indexed_at": index.indexed_at,
@@ -71,6 +88,8 @@ def get_repo_outline(
         "directories": dict(dir_file_counts.most_common()),
         "symbol_kinds": dict(kind_counts.most_common()),
     }
+    if most_imported:
+        payload_content["most_imported_files"] = most_imported
     response_bytes = len(json.dumps(payload_content).encode("utf-8"))
     tokens_saved = estimate_savings(raw_bytes, response_bytes)
     total_saved = record_savings(tokens_saved, tool_name="get_repo_outline")
