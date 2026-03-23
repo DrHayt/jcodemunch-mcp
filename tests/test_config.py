@@ -42,3 +42,27 @@ class TestJSONCParser:
         text = '{"url": "http://example.com", "note": "use /* here*/"}'
         result = _strip_jsonc(text)
         assert result == text  # Should be unchanged
+
+
+class TestConfigDefaults:
+    """Test default config values."""
+
+    def test_default_max_folder_files(self):
+        """Should default to 2000 max folder files."""
+        from src.jcodemunch_mcp.config import DEFAULTS
+        assert DEFAULTS["max_folder_files"] == 2000
+
+    def test_default_max_index_files(self):
+        """Should default to 10000 max index files."""
+        from src.jcodemunch_mcp.config import DEFAULTS
+        assert DEFAULTS["max_index_files"] == 10000
+
+    def test_default_languages_is_none(self):
+        """Should default to None (all languages enabled)."""
+        from src.jcodemunch_mcp.config import DEFAULTS
+        assert DEFAULTS["languages"] is None
+
+    def test_default_disabled_tools_is_empty(self):
+        """Should default to empty list (all tools enabled)."""
+        from src.jcodemunch_mcp.config import DEFAULTS
+        assert DEFAULTS["disabled_tools"] == []
