@@ -151,10 +151,6 @@ def search_text(
     total_saved = record_savings(tokens_saved, tool_name="search_text")
 
     return {
-        "repo": f"{owner}/{name}",
-        "query": query,
-        "is_regex": is_regex,
-        "context_lines": context_lines,
         "result_count": result_count,
         "results": results,
         "_meta": {

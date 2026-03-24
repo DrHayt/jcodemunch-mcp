@@ -289,7 +289,6 @@ def search_symbols(
                 "file": sym["file"],
                 "line": sym["line"],
                 "byte_length": sym.get("byte_length", 0),
-                "score": score,
             }
         else:
             entry = {
@@ -301,9 +300,9 @@ def search_symbols(
                 "signature": sym["signature"],
                 "summary": sym.get("summary", ""),
                 "byte_length": sym.get("byte_length", 0),
-                "score": score,
             }
         if debug:
+            entry["score"] = round(score, 3)
             entry["score_breakdown"] = _bm25_breakdown(sym, query_terms, idf, avgdl)
 
         # Bounded heap: O(N log K) instead of O(N log N)
@@ -370,8 +369,6 @@ def search_symbols(
         meta["candidates_scored"] = candidates_scored
 
     return {
-        "repo": f"{owner}/{name}",
-        "query": query,
         "result_count": len(scored_results),
         "results": scored_results,
         "_meta": meta,
