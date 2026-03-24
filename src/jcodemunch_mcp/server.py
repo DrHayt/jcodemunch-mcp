@@ -25,7 +25,7 @@ from .tools.resolve_repo import resolve_repo
 from .tools.get_file_tree import get_file_tree
 from .tools.get_file_outline import get_file_outline
 from .tools.get_file_content import get_file_content
-from .tools.get_symbol import get_symbol, get_symbols
+from .tools.get_symbol import get_symbol_source
 from .tools.search_symbols import search_symbols
 from .tools.invalidate_cache import invalidate_cache
 from .tools.search_text import search_text
@@ -326,8 +326,8 @@ async def list_tools() -> list[Tool]:
             }
         ),
         Tool(
-            name="get_symbol",
-            description="Get the full source code of a specific symbol. Use after identifying relevant symbols via get_file_outline or search_symbols.",
+            name="get_symbol_source",
+            description="Get full source of one symbol (symbol_id → flat object) or many (symbol_ids[] → {symbols, errors}). Supports verify and context_lines.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -337,7 +337,12 @@ async def list_tools() -> list[Tool]:
                     },
                     "symbol_id": {
                         "type": "string",
-                        "description": "Symbol ID from get_file_outline or search_symbols"
+                        "description": "Single symbol ID — returns flat symbol object"
+                    },
+                    "symbol_ids": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Multiple symbol IDs — returns {symbols, errors}"
                     },
                     "verify": {
                         "type": "boolean",
@@ -350,7 +355,7 @@ async def list_tools() -> list[Tool]:
                         "default": 0
                     }
                 },
-                "required": ["repo", "symbol_id"]
+                "required": ["repo"]
             }
         ),
         Tool(
@@ -377,25 +382,6 @@ async def list_tools() -> list[Tool]:
                     }
                 },
                 "required": ["repo", "file_path"]
-            }
-        ),
-        Tool(
-            name="get_symbols",
-            description="Get full source code of multiple symbols in one call. Efficient for loading related symbols.",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "repo": {
-                        "type": "string",
-                        "description": "Repository identifier (owner/repo or just repo name)"
-                    },
-                    "symbol_ids": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "List of symbol IDs to retrieve"
-                    }
-                },
-                "required": ["repo", "symbol_ids"]
             }
         ),
         Tool(
@@ -935,23 +921,15 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                     storage_path=storage_path,
                 )
             )
-        elif name == "get_symbol":
+        elif name == "get_symbol_source":
             result = await asyncio.to_thread(
                 functools.partial(
-                    get_symbol,
+                    get_symbol_source,
                     repo=arguments["repo"],
-                    symbol_id=arguments["symbol_id"],
+                    symbol_id=arguments.get("symbol_id"),
+                    symbol_ids=arguments.get("symbol_ids"),
                     verify=arguments.get("verify", False),
                     context_lines=arguments.get("context_lines", 0),
-                    storage_path=storage_path,
-                )
-            )
-        elif name == "get_symbols":
-            result = await asyncio.to_thread(
-                functools.partial(
-                    get_symbols,
-                    repo=arguments["repo"],
-                    symbol_ids=arguments["symbol_ids"],
                     storage_path=storage_path,
                 )
             )

@@ -96,11 +96,24 @@ class TestInputValidation:
         result = search_text("owner/repo", "query", max_results=999)
         assert "error" in result
 
-    def test_get_symbol_clamps_context_lines(self):
-        from jcodemunch_mcp.tools.get_symbol import get_symbol
+    def test_get_symbol_source_rejects_both_params(self):
+        from jcodemunch_mcp.tools.get_symbol import get_symbol_source
 
-        result = get_symbol("owner/repo", "sym_id", context_lines=-5)
+        result = get_symbol_source("owner/repo", symbol_id="a", symbol_ids=["a", "b"])
+        assert "error" in result
+        assert "not both" in result["error"]
+
+    def test_get_symbol_source_rejects_neither_param(self):
+        from jcodemunch_mcp.tools.get_symbol import get_symbol_source
+
+        result = get_symbol_source("owner/repo")
         assert "error" in result
 
-        result = get_symbol("owner/repo", "sym_id", context_lines=999)
+    def test_get_symbol_source_clamps_context_lines(self):
+        from jcodemunch_mcp.tools.get_symbol import get_symbol_source
+
+        result = get_symbol_source("owner/repo", symbol_id="sym_id", context_lines=-5)
+        assert "error" in result
+
+        result = get_symbol_source("owner/repo", symbol_id="sym_id", context_lines=999)
         assert "error" in result

@@ -16,25 +16,28 @@ def _make_meta(timing_ms: float, **kwargs) -> dict:
     return meta
 
 
-def get_symbol(
+def get_symbol_source(
     repo: str,
-    symbol_id: str,
+    symbol_id: Optional[str] = None,
+    symbol_ids: Optional[list[str]] = None,
     verify: bool = False,
     context_lines: int = 0,
-    storage_path: Optional[str] = None
+    storage_path: Optional[str] = None,
 ) -> dict:
-    """Get full source of a specific symbol.
+    """Get full source of one or more symbols by ID.
 
-    Args:
-        repo: Repository identifier (owner/repo or just repo name).
-        symbol_id: Symbol ID from get_file_outline or search_symbols.
-        verify: If True, re-read source and verify content hash matches.
-        context_lines: Number of lines before/after the symbol to include.
-        storage_path: Custom storage path.
-
-    Returns:
-        Dict with symbol details, source code, and _meta envelope.
+    Pass symbol_id (string) for one symbol — returns flat symbol object.
+    Pass symbol_ids (array) for batch — returns {symbols, errors}.
+    Both modes support verify and context_lines.
     """
+    if symbol_id is None and symbol_ids is None:
+        return {"error": "Provide symbol_id (string) or symbol_ids (array)."}
+    if symbol_id is not None and symbol_ids is not None:
+        return {"error": "Provide symbol_id or symbol_ids, not both."}
+
+    batch_mode = symbol_ids is not None
+    ids = symbol_ids if batch_mode else [symbol_id]
+
     start = time.perf_counter()
     context_lines = max(0, min(context_lines, 50))
 
@@ -49,123 +52,40 @@ def get_symbol(
     if not index:
         return {"error": f"Repository not indexed: {owner}/{name}"}
 
-    symbol = index.get_symbol(symbol_id)
-
-    if not symbol:
-        return {"error": f"Symbol not found: {symbol_id}"}
-
-    # Get source via byte-offset read (pass index to avoid a second load_index call)
-    source = store.get_symbol_content(owner, name, symbol_id, _index=index)
-
-    # Compute content path once (used for context lines and token savings)
-    content_dir = store._content_dir(owner, name)
-    file_full_path = content_dir / symbol["file"]
-
-    # Add context lines if requested
-    context_before = ""
-    context_after = ""
-    if context_lines > 0 and source:
-        if file_full_path.exists():
-            try:
-                all_lines = file_full_path.read_text(encoding="utf-8", errors="replace").split("\n")
-                start_line = symbol["line"] - 1  # 0-indexed
-                end_line = symbol["end_line"]     # exclusive
-                before_start = max(0, start_line - context_lines)
-                after_end = min(len(all_lines), end_line + context_lines)
-                if before_start < start_line:
-                    context_before = "\n".join(all_lines[before_start:start_line])
-                if end_line < after_end:
-                    context_after = "\n".join(all_lines[end_line:after_end])
-            except Exception:
-                pass
-
-    meta = {}
-    if verify and source:
-        actual_hash = hashlib.sha256(source.encode("utf-8")).hexdigest()
-        stored_hash = symbol.get("content_hash", "")
-        meta["content_verified"] = actual_hash == stored_hash if stored_hash else None
-
-    # Token savings: raw file size vs symbol byte length
-    raw_bytes = 0
-    try:
-        raw_bytes = os.path.getsize(file_full_path)
-    except OSError:
-        pass
-    tokens_saved = estimate_savings(raw_bytes, symbol.get("byte_length", 0))
-    total_saved = record_savings(tokens_saved, tool_name="get_symbol")
-    meta["tokens_saved"] = tokens_saved
-    meta["total_tokens_saved"] = total_saved
-    meta.update(_cost_avoided(tokens_saved, total_saved))
-
-    elapsed = (time.perf_counter() - start) * 1000
-
-    result = {
-        "id": symbol["id"],
-        "kind": symbol["kind"],
-        "name": symbol["name"],
-        "file": symbol["file"],
-        "line": symbol["line"],
-        "end_line": symbol["end_line"],
-        "signature": symbol["signature"],
-        "decorators": symbol.get("decorators", []),
-        "docstring": symbol.get("docstring", ""),
-        "content_hash": symbol.get("content_hash", ""),
-        "source": source or "",
-        "_meta": _make_meta(elapsed, **meta),
-    }
-
-    if context_before:
-        result["context_before"] = context_before
-    if context_after:
-        result["context_after"] = context_after
-
-    return result
-
-
-def get_symbols(
-    repo: str,
-    symbol_ids: list[str],
-    storage_path: Optional[str] = None
-) -> dict:
-    """Get full source of multiple symbols.
-
-    Args:
-        repo: Repository identifier (owner/repo or just repo name).
-        symbol_ids: List of symbol IDs.
-        storage_path: Custom storage path.
-
-    Returns:
-        Dict with symbols list, errors, and _meta envelope.
-    """
-    start = time.perf_counter()
-
-    try:
-        owner, name = resolve_repo(repo, storage_path)
-    except ValueError as e:
-        return {"error": str(e)}
-
-    store = IndexStore(base_path=storage_path)
-    index = store.load_index(owner, name)
-
-    if not index:
-        return {"error": f"Repository not indexed: {owner}/{name}"}
-
-    symbols = []
-    errors = []
+    symbols_out = []
+    errors_out = []
     seen_files: set = set()
     raw_bytes = 0
     response_bytes = 0
 
-    for symbol_id in symbol_ids:
-        symbol = index.get_symbol(symbol_id)
+    for sid in ids:
+        symbol = index.get_symbol(sid)
 
         if not symbol:
-            errors.append({"id": symbol_id, "error": f"Symbol not found: {symbol_id}"})
+            errors_out.append({"id": sid, "error": f"Symbol not found: {sid}"})
             continue
 
-        source = store.get_symbol_content(owner, name, symbol_id, _index=index)
+        source = store.get_symbol_content(owner, name, sid, _index=index)
+        content_dir = store._content_dir(owner, name)
+        file_full_path = content_dir / symbol["file"]
 
-        symbols.append({
+        context_before = ""
+        context_after = ""
+        if context_lines > 0 and source and file_full_path.exists():
+            try:
+                all_lines = file_full_path.read_text(encoding="utf-8", errors="replace").split("\n")
+                s_line = symbol["line"] - 1  # 0-indexed
+                e_line = symbol["end_line"]   # exclusive
+                before_start = max(0, s_line - context_lines)
+                after_end = min(len(all_lines), e_line + context_lines)
+                if before_start < s_line:
+                    context_before = "\n".join(all_lines[before_start:s_line])
+                if e_line < after_end:
+                    context_after = "\n".join(all_lines[e_line:after_end])
+            except Exception:
+                pass
+
+        entry = {
             "id": symbol["id"],
             "kind": symbol["kind"],
             "name": symbol["name"],
@@ -176,28 +96,43 @@ def get_symbols(
             "decorators": symbol.get("decorators", []),
             "docstring": symbol.get("docstring", ""),
             "content_hash": symbol.get("content_hash", ""),
-            "source": source or ""
-        })
+            "source": source or "",
+        }
+        if context_before:
+            entry["context_before"] = context_before
+        if context_after:
+            entry["context_after"] = context_after
 
-        # Accumulate savings in the same loop (no second pass needed)
+        if verify and source:
+            actual_hash = hashlib.sha256(source.encode("utf-8")).hexdigest()
+            stored_hash = symbol.get("content_hash", "")
+            entry["content_verified"] = actual_hash == stored_hash if stored_hash else None
+
+        symbols_out.append(entry)
+
+        # Accumulate token savings
         f = symbol["file"]
         if f not in seen_files:
             seen_files.add(f)
             try:
-                raw_bytes += os.path.getsize(store._content_dir(owner, name) / f)
+                raw_bytes += os.path.getsize(file_full_path)
             except OSError:
                 pass
         response_bytes += symbol.get("byte_length", 0)
 
     tokens_saved = estimate_savings(raw_bytes, response_bytes)
-    total_saved = record_savings(tokens_saved, tool_name="get_symbol")
-
+    total_saved = record_savings(tokens_saved, tool_name="get_symbol_source")
     elapsed = (time.perf_counter() - start) * 1000
+    meta = _make_meta(elapsed, tokens_saved=tokens_saved, total_tokens_saved=total_saved,
+                      **_cost_avoided(tokens_saved, total_saved))
 
-    return {
-        "symbols": symbols,
-        "errors": errors,
-        "_meta": _make_meta(elapsed, symbol_count=len(symbols),
-                            tokens_saved=tokens_saved, total_tokens_saved=total_saved,
-                            **_cost_avoided(tokens_saved, total_saved)),
-    }
+    if batch_mode:
+        meta["symbol_count"] = len(symbols_out)
+        return {"symbols": symbols_out, "errors": errors_out, "_meta": meta}
+
+    # Single mode: flat object or error
+    if errors_out:
+        return {"error": errors_out[0]["error"]}
+    result = symbols_out[0]
+    result["_meta"] = meta
+    return result
