@@ -1,7 +1,7 @@
 # jcodemunch-mcp — Project Brief
 
 ## Current State
-- **Version:** 1.11.0 (published to PyPI)
+- **Version:** 1.11.1 (published to PyPI)
 - **INDEX_VERSION:** 6
 - **Tests:** 1103 passed, 7 skipped
 - **Python:** >=3.10
@@ -130,6 +130,7 @@ Custom parsers (tree-sitter grammar lacks clean named fields):
 | #160 | DrHayt | resolve_repo tool — O(1) path-to-repo-ID lookup; merged v1.10.19 |
 | #162 | MariusAdrian88 | Centralized JSONC config: language filtering, tool gating, meta control, per-project overrides; merged v1.10.20 |
 | #163 | MariusAdrian88 | Merge get_symbol+get_symbols into get_symbol_source; batch verify+context_lines; config comma fix; merged v1.11.0 |
+| #165 | tmeckel | OpenAI Responses API support (OPENAI_WIRE_API=responses); merged v1.11.1 |
 
 
 ## Roadmap / Backlog
@@ -210,6 +211,7 @@ Custom parsers (tree-sitter grammar lacks clean named fields):
 | 1.10.23 | Perf: INDEX_VERSION 6 — add `size_bytes` column to `files` table; eliminates `os.path.getsize()` stat calls in search_symbols, search_text, and get_file_content (replaced with `index.file_sizes.get()`); auto-migration from v5; `file_sizes` dict propagated through `_patch_index_from_delta` for O(delta) incremental updates |
 | 1.10.24 | Perf: pipeline optimization — cache `get_language_for_path()` result in parse loop and reuse for import extraction (eliminates 2× call per file across all 3 pipeline functions); add `source_bytes` param to `parse_file` and pass pre-encoded bytes from full-index loop (eliminates redundant `content.encode('utf-8')` on every indexed file); add `_file_hash_bytes` helper for bytes-based hashing |
 | 1.11.0 | Breaking: merge get_symbol+get_symbols into get_symbol_source — shape-follows-input (symbol_id→flat object, symbol_ids[]→{symbols,errors}); batch mode gains verify+context_lines; mutual exclusion enforced; config template comma bug fixed; disabled_tools template uses inline commented entries — contributed by MariusAdrian88 (PR #163) |
+| 1.11.1 | Feat: OpenAI Responses API support — set OPENAI_WIRE_API=responses to use /responses endpoint instead of /chat/completions; supports output_text shortcut and output[].content[] traversal; graceful fallback to signature on parse error; 7 new tests — contributed by tmeckel (PR #165) |
 
 ## Maintenance Practices
 
