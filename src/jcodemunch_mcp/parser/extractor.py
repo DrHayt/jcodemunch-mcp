@@ -3409,7 +3409,7 @@ def _parse_ejs_symbols(source_bytes: bytes, filename: str) -> list[Symbol]:
 
 
 # ---------------------------------------------------------------------------
-# Razor (.cshtml) custom symbol extractor
+# Razor (.cshtml / .razor) custom symbol extractor
 # ---------------------------------------------------------------------------
 
 _RAZOR_SCRIPT_RE = re.compile(r"<script\b([^>]*)>(.*?)</script>", re.IGNORECASE | re.DOTALL)
@@ -3417,18 +3417,23 @@ _RAZOR_STYLE_RE = re.compile(r"<style\b([^>]*)>(.*?)</style>", re.IGNORECASE | r
 _RAZOR_ID_RE = re.compile(r"""\bid\s*=\s*["']([^"'<>]+)["']""", re.IGNORECASE)
 _RAZOR_SCRIPT_SRC_RE = re.compile(r"""\bsrc\s*=\s*["']([^"'<>]+)["']""", re.IGNORECASE)
 _RAZOR_CODE_BLOCK_RE = re.compile(r"@(?:functions|code)\s*\{", re.IGNORECASE)
+# Blazor-specific directives (@page route, @inject Type Name)
+_RAZOR_PAGE_RE = re.compile(r'^@page\s+"([^"]+)"', re.MULTILINE)
+_RAZOR_INJECT_RE = re.compile(r'^@inject\s+(\S+)\s+(\w+)', re.MULTILINE)
 
 
 def _parse_razor_symbols(source_bytes: bytes, filename: str) -> list[Symbol]:
-    """Extract symbols from Razor (.cshtml) templates.
+    """Extract symbols from Razor (.cshtml / .razor) templates.
 
     Strategy:
-    - Synthetic view symbol from filename
+    - Synthetic view/component symbol from filename
     - HTML ids as constant symbols
     - <script src="..."> as function symbols
     - Inline <script> blocks re-parsed as JavaScript
     - @functions/@code blocks re-parsed as C# inside a synthetic shim class
     - <style> blocks emitted as constant symbols for retrievable structure
+    - @page routes emitted as constant symbols (Blazor components)
+    - @inject directives emitted as constant symbols (Blazor components)
     """
     from pathlib import Path as _Path
 
@@ -3619,6 +3624,49 @@ def _parse_razor_symbols(source_bytes: bytes, filename: str) -> list[Symbol]:
                     qualified_prefix=view_name,
                 )
             )
+
+    # Extract @page routes (Blazor components)
+    for page_match in _RAZOR_PAGE_RE.finditer(content):
+        route = page_match.group(1)
+        line_no = _line_for_offset(page_match.start())
+        snippet = page_match.group(0).encode("utf-8")
+        symbols.append(Symbol(
+            id=make_symbol_id(filename, f"{view_name}.@page:{route}", "constant"),
+            file=filename,
+            name=route,
+            qualified_name=f"{view_name}.@page:{route}",
+            kind="constant",
+            language="razor",
+            signature=f'@page "{route}"',
+            parent=view_symbol.id,
+            line=line_no,
+            end_line=line_no,
+            byte_offset=page_match.start(),
+            byte_length=len(snippet),
+            content_hash=compute_content_hash(snippet),
+        ))
+
+    # Extract @inject directives (Blazor components)
+    for inject_match in _RAZOR_INJECT_RE.finditer(content):
+        service_type = inject_match.group(1)
+        prop_name = inject_match.group(2)
+        line_no = _line_for_offset(inject_match.start())
+        snippet = inject_match.group(0).encode("utf-8")
+        symbols.append(Symbol(
+            id=make_symbol_id(filename, f"{view_name}.{prop_name}", "constant"),
+            file=filename,
+            name=prop_name,
+            qualified_name=f"{view_name}.{prop_name}",
+            kind="constant",
+            language="razor",
+            signature=f"@inject {service_type} {prop_name}",
+            parent=view_symbol.id,
+            line=line_no,
+            end_line=line_no,
+            byte_offset=inject_match.start(),
+            byte_length=len(snippet),
+            content_hash=compute_content_hash(snippet),
+        ))
 
     symbols.sort(key=lambda s: (s.line, s.byte_offset, s.name))
     return symbols

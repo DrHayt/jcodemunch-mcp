@@ -64,6 +64,7 @@ LANGUAGE_EXTENSIONS = {
     ".dart": "dart",
     ".cs": "csharp",
     ".cshtml": "razor",
+    ".razor": "razor",
     ".c": "c",
     ".h": "cpp",
     ".cpp": "cpp",
@@ -492,12 +493,13 @@ CSHARP_SPEC = LanguageSpec(
 )
 
 
-# Razor / ASP.NET views specification
-# NOTE: .cshtml files are mixed-language documents containing Razor directives,
-# HTML markup, optional <script>/<style> blocks, and embedded C# in
-# @functions/@code regions. Extraction is handled by _parse_razor_symbols() in
-# extractor.py, which delegates subregions to the existing C#/JS parsers and
-# emits lightweight symbols for HTML ids, external scripts, and style blocks.
+# Razor / ASP.NET views + Blazor components specification
+# NOTE: .cshtml (MVC views) and .razor (Blazor components) are both mixed-language
+# documents containing Razor directives, HTML markup, optional <script>/<style>
+# blocks, and embedded C# in @functions/@code regions.  Extraction is handled by
+# _parse_razor_symbols() in extractor.py, which delegates subregions to the
+# existing C#/JS parsers and emits lightweight symbols for HTML ids, external
+# scripts, style blocks, and (for Blazor) @page routes and @inject directives.
 RAZOR_SPEC = LanguageSpec(
     ts_language="html",
     symbol_node_types={},

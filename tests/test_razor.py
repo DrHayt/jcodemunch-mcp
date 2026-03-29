@@ -1,4 +1,4 @@
-"""Tests for Razor (.cshtml) mixed-language symbol extraction."""
+"""Tests for Razor (.cshtml / .razor) mixed-language symbol extraction."""
 
 from pathlib import Path
 
@@ -9,6 +9,7 @@ from jcodemunch_mcp.tools.index_folder import discover_local_files, index_folder
 
 FIXTURE = Path(__file__).parent / "fixtures" / "razor" / "sample.cshtml"
 PUBLIC_FIXTURE = Path(__file__).parent / "fixtures" / "razor" / "dotnet_aspnetcore_layout.cshtml"
+BLAZOR_FIXTURE = Path(__file__).parent / "fixtures" / "razor" / "Counter.razor"
 
 
 def _load():
@@ -149,3 +150,108 @@ def test_parse_public_razor_layout_fixture():
     assert scripts["jquery.min.js"].parent == view.id
     assert scripts["bootstrap.bundle.min.js"].parent == view.id
     assert scripts["site.js"].parent == view.id
+
+
+# ---------------------------------------------------------------------------
+# .razor (Blazor) tests
+# ---------------------------------------------------------------------------
+
+def _load_blazor():
+    return BLAZOR_FIXTURE.read_text(encoding="utf-8")
+
+
+def _blazor_symbols():
+    return parse_file(_load_blazor(), "Pages/Counter.razor", "razor")
+
+
+def test_razor_extension_detected():
+    assert get_language_for_path("Pages/Counter.razor") == "razor"
+
+
+def test_razor_extension_in_registry():
+    assert LANGUAGE_EXTENSIONS[".razor"] == "razor"
+
+
+def test_blazor_component_symbol():
+    symbols = _blazor_symbols()
+    component = next((s for s in symbols if s.name == "Counter" and s.kind == "class"), None)
+    assert component is not None
+    assert component.language == "razor"
+    assert component.line == 1
+
+
+def test_blazor_page_routes():
+    symbols = _blazor_symbols()
+    routes = {s.name: s for s in symbols if s.signature.startswith("@page ")}
+    assert "/counter" in routes
+    assert "/counter/{StartingCount:int}" in routes
+    assert routes["/counter"].kind == "constant"
+    assert routes["/counter"].language == "razor"
+
+
+def test_blazor_inject_directives():
+    symbols = _blazor_symbols()
+    injects = {s.name: s for s in symbols if s.signature.startswith("@inject ")}
+    assert "Logger" in injects
+    assert "Navigation" in injects
+    assert injects["Logger"].signature == "@inject ILogger<Counter> Logger"
+    assert injects["Navigation"].signature == "@inject NavigationManager Navigation"
+    assert injects["Logger"].kind == "constant"
+
+
+def test_blazor_code_block_csharp_members():
+    symbols = _blazor_symbols()
+    component = next(s for s in symbols if s.name == "Counter" and s.kind == "class")
+
+    on_init = next((s for s in symbols if s.name == "OnInitialized"), None)
+    assert on_init is not None
+    assert on_init.language == "csharp"
+    assert on_init.parent == component.id
+
+    increment = next((s for s in symbols if s.name == "IncrementCount"), None)
+    assert increment is not None
+    assert increment.language == "csharp"
+    assert increment.parent == component.id
+
+
+def test_blazor_html_ids():
+    symbols = _blazor_symbols()
+    ids = {s.name for s in symbols if s.kind == "constant" and s.language == "razor" and not s.signature.startswith(("@page", "@inject"))}
+    assert "page-title" in ids
+    assert "current-count" in ids
+    assert "increment-btn" in ids
+
+
+def test_blazor_style_block():
+    symbols = _blazor_symbols()
+    style = next((s for s in symbols if s.name == "style_1"), None)
+    assert style is not None
+    assert style.kind == "constant"
+    assert style.language == "razor"
+
+
+def test_discover_local_files_includes_razor(tmp_path):
+    pages = tmp_path / "Pages"
+    pages.mkdir(parents=True)
+    (pages / "Counter.razor").write_text(_load_blazor(), encoding="utf-8")
+
+    files, warnings, skip_counts = discover_local_files(tmp_path)
+    paths = {Path(f).name for f in files}
+
+    assert "Counter.razor" in paths
+    assert skip_counts["wrong_extension"] == 0
+
+
+def test_index_folder_parses_blazor_symbols(tmp_path):
+    root = tmp_path / "app"
+    pages = root / "Pages"
+    pages.mkdir(parents=True)
+    (pages / "Counter.razor").write_text(_load_blazor(), encoding="utf-8")
+
+    result = index_folder(str(root), use_ai_summaries=False, storage_path=str(tmp_path / "store"))
+
+    assert result["success"] is True
+    assert result["file_count"] == 1
+    assert result["languages"]["razor"] == 1
+    assert result["symbol_count"] >= 5
+    assert "Pages/Counter.razor" in result["files"]
