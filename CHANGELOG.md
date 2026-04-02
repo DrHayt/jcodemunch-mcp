@@ -4,6 +4,11 @@ All notable changes to jcodemunch-mcp are documented here.
 
 ## [Unreleased]
 
+## [1.21.5] - 2026-04-02
+
+### Fixed
+- **Deferred summarization no longer doubles `CodeIndex.symbols` in memory (C1)** — `_patch_index_from_delta` now builds a set of symbol IDs present in `new_sym_dicts` and skips any retained symbol whose ID is already being replaced. Previously, when `_run_deferred_summarize` called `incremental_save` with `changed_files=[]` and `deleted_files=[]`, every symbol was retained *and* appended again as a summarized copy, doubling the in-memory symbol list. This caused BM25 scores to be computed over a 2× corpus (wrong IDF, wrong `avgdl`) and `search_symbols` to return duplicate hits for the same symbol ID until the next cold cache load.
+
 ## [1.21.4] - 2026-04-02
 
 ### Added

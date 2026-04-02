@@ -1208,12 +1208,18 @@ class SQLiteIndexStore:
         new_sym_dicts = [self._symbol_to_dict(s) for s in new_symbols]
 
         # Patch symbol list: drop changed/deleted, append new.
+        # Also drop any retained symbol whose id is being replaced by a new_sym_dict
+        # (e.g. deferred summarization updates existing symbols in-place without
+        # touching files_to_remove — without this check they would be duplicated).
         # Strip BM25 internal keys from any retained symbol that lacks a content_hash —
         # matches the carry-forward contract of the cold path (no hash = can't verify).
         _bm25_keys = {"_tokens", "_tf", "_dl"}
+        new_sym_ids = {s.get("id") for s in new_sym_dicts}
         retained_syms = []
         for s in old.symbols:
             if s.get("file") in files_to_remove:
+                continue
+            if s.get("id") in new_sym_ids:
                 continue
             if s.keys() & _bm25_keys and not s.get("content_hash"):
                 s = {k: v for k, v in s.items() if k not in _bm25_keys}
