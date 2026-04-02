@@ -347,22 +347,26 @@ _ALL_EXTENSIONS = _JS_EXTENSIONS + _PY_EXTENSIONS + _RUBY_EXTENSIONS + (".go",)
 
 # Cache for SQL stem lookups — avoids O(n) scans when resolve_specifier is
 # called repeatedly with the same source_files set (common in tight loops).
-_sql_stem_cache: tuple[int, dict[str, str]] = (0, {})
+# Keyed by frozenset of .sql paths (content identity, not object identity) to
+# prevent id() aliasing after GC (C7-A).
+_sql_stem_cache: dict[frozenset, dict[str, str]] = {}
+_SQL_STEM_CACHE_MAX = 4
 
 
 def _get_sql_stems(source_files: set[str]) -> dict[str, str]:
-    """Return a lowered-stem -> file_path dict for .sql files, cached by set identity."""
-    global _sql_stem_cache
-    sf_id = id(source_files)
-    if _sql_stem_cache[0] == sf_id:
-        return _sql_stem_cache[1]
+    """Return a lowered-stem -> file_path dict for .sql files, cached by content."""
+    key = frozenset(f for f in source_files if f.endswith(".sql"))
+    cached = _sql_stem_cache.get(key)
+    if cached is not None:
+        return cached
     stems: dict[str, str] = {}
-    for sf in source_files:
-        if sf.endswith(".sql"):
-            stem = posixpath.splitext(posixpath.basename(sf))[0].lower()
-            if stem not in stems:  # first match wins
-                stems[stem] = sf
-    _sql_stem_cache = (sf_id, stems)
+    for sf in key:
+        stem = posixpath.splitext(posixpath.basename(sf))[0].lower()
+        if stem not in stems:  # first match wins
+            stems[stem] = sf
+    if len(_sql_stem_cache) >= _SQL_STEM_CACHE_MAX:
+        _sql_stem_cache.pop(next(iter(_sql_stem_cache)))
+    _sql_stem_cache[key] = stems
     return stems
 
 

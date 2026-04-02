@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 from .. import config as _config
 from ..parser import parse_file, LANGUAGE_EXTENSIONS, get_language_for_path
 from ..parser.context import discover_providers, enrich_symbols, collect_metadata
-from ..parser.imports import extract_imports
+from ..parser.imports import extract_imports, _alias_map_cache as _imap_cache
 from ..security import (
     validate_path,
     is_symlink_escape,
@@ -423,6 +423,9 @@ def index_folder(
 
     if not folder_path.is_dir():
         return {"success": False, "error": f"Path is not a directory: {path}"}
+
+    # Evict stale tsconfig alias map so re-indexing picks up edited tsconfig.json (C6-A)
+    _imap_cache.pop(str(folder_path), None)
 
     # Load and cache project-level config (.jcodemunch.jsonc) so subsequent
     # config.get() calls within this indexing run use project overrides.

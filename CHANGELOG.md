@@ -4,6 +4,13 @@ All notable changes to jcodemunch-mcp are documented here.
 
 ## [Unreleased]
 
+## [1.21.8] - 2026-04-02
+
+### Fixed
+- **`invalidate_cache` now clears all four in-process caches (X1 / C4-B)** — previously `_REPO_PATH_CACHE`, `_PROJECT_CONFIGS`/`_PROJECT_CONFIG_HASHES`, `_alias_map_cache`, and `_bare_name_cache` were never evicted on `invalidate_cache`, leaving stale import graphs, wrong project config, and unresolvable repo names for the process lifetime. `invalidate_cache` now resolves `source_root` before deletion and clears all four caches in addition to the SQLite/JSON index.
+- **`_alias_map_cache` evicted at the start of every `index_folder` run (C6-A)** — tsconfig/jsconfig path alias edits were permanently invisible to re-indexing because `_load_tsconfig_aliases` cached by `source_root` with no invalidation hook. `index_folder` now pops the stale entry before parsing begins, so alias-dependent import edges (`find_importers`, `find_references`, `get_dependency_graph`) are always computed against the current tsconfig.
+- **`_sql_stem_cache` keyed by frozenset instead of `id()` (C7-A)** — the single-entry tuple cache used `id(source_files)` as its key. After the previous `source_files` set was GC'd, a new set allocated at the same address received the same `id`, causing a false cache hit and returning SQL stem mappings for the wrong file set. Replaced with a bounded frozenset-keyed dict (max 4 entries) for correct content-based identity.
+
 ## [1.21.7] - 2026-04-02
 
 ### Fixed
