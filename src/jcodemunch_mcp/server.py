@@ -2531,7 +2531,8 @@ def _generate_claude_md_snippet(missing_only: bool = False) -> str:
                                 "get_repo_health", "get_symbol_importance",
                                 "find_dead_code", "get_dead_code_v2"]),
         ("Diffs & Embeddings", ["get_symbol_diff", "embed_repo"]),
-        ("Utilities", ["get_session_stats", "invalidate_cache", "test_summarizer"]),
+        ("Utilities", ["get_session_stats", "invalidate_cache", "test_summarizer",
+                        "audit_agent_config"]),
     ]
     from . import __version__ as _ver
     lines = [

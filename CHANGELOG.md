@@ -4,6 +4,11 @@ All notable changes to jcodemunch-mcp are documented here.
 
 ## [Unreleased]
 
+## [1.21.25] - 2026-04-03
+
+### Added
+- **`audit_agent_config` tool** — scans agent config files (CLAUDE.md, .cursorrules, copilot-instructions.md, .windsurfrules, settings.json, etc.) for token waste. Reports per-file token cost, stale symbol references (cross-referenced against the jcodemunch index), dead file paths, redundancy between global and project configs, bloat patterns, and scope leaks. 34 new tests.
+
 ## [1.21.24] - 2026-04-03
 
 ### Added
