@@ -48,6 +48,8 @@ def handle_hook_event(event_type: str, manifest_path: Path = DEFAULT_MANIFEST_PA
         f.write(json.dumps(entry) + "\n")
         f.flush()
 
+    # Claude Code reads stdout to get the worktree path.
+    print(resolved)
     print(f"jcodemunch-mcp: recorded {event_type} for {resolved}", file=sys.stderr)
 
 
