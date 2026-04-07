@@ -24,9 +24,16 @@ def handle_hook_event(event_type: str, manifest_path: Path = DEFAULT_MANIFEST_PA
     except Exception as exc:
         print(f"ERROR: failed to read stdin: {exc}", file=sys.stderr)
         sys.exit(1)
+    # Claude Code sends {cwd, name} — derive the worktree path.
+    # Also accept legacy worktreePath/worktree_path for backwards compat.
     worktree_path = payload.get("worktreePath") or payload.get("worktree_path")
     if not worktree_path:
-        print("ERROR: no worktreePath in stdin payload", file=sys.stderr)
+        cwd = payload.get("cwd", "")
+        name = payload.get("name", "")
+        if cwd and name:
+            worktree_path = str(Path(cwd) / ".claude" / "worktrees" / name)
+    if not worktree_path:
+        print("ERROR: no worktree path in stdin payload (need worktreePath, or cwd+name)", file=sys.stderr)
         sys.exit(1)
 
     resolved = str(Path(worktree_path).resolve())

@@ -64,6 +64,20 @@ class TestHookEvent:
         entry = json.loads(manifest.read_text().strip())
         assert entry["path"] == str(Path("/tmp/wt2").resolve())
 
+    def test_derives_path_from_cwd_and_name(self, tmp_path):
+        """Claude Code sends {cwd, name} — derive worktree path from them."""
+        manifest = tmp_path / "manifest.jsonl"
+        payload = json.dumps({
+            "cwd": "/projects/myrepo",
+            "name": "moonlit-exploring-journal",
+            "hook_event_name": "WorktreeCreate",
+        })
+        with patch("sys.stdin", StringIO(payload)):
+            handle_hook_event("create", manifest_path=manifest)
+        entry = json.loads(manifest.read_text().strip())
+        expected = str(Path("/projects/myrepo/.claude/worktrees/moonlit-exploring-journal").resolve())
+        assert entry["path"] == expected
+
     def test_exits_on_missing_path(self, tmp_path):
         manifest = tmp_path / "manifest.jsonl"
         payload = json.dumps({"unrelated": "data"})
