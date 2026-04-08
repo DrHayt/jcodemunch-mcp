@@ -2,6 +2,12 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.23.4] — 2026-04-08
+
+### Fixed
+- Python import resolution: `resolve_specifier` now handles module-style absolute imports (`app.notifications.mentions`) by converting dots to slashes and trying each auto-detected source root (`backend/`, `src/`, etc.) as a prefix. Previously `posixpath.splitext` treated the last dotted component as a file extension, breaking all non-flat Python layouts (#223, @kallevaravas)
+- Python import extraction: `_PY_FROM` and `_PY_IMPORT` regexes now allow optional leading whitespace, capturing function-local and class-body imports that were previously silently dropped (#223, @kallevaravas)
+
 ## [1.23.3] — 2026-04-07
 
 ### Fixed
