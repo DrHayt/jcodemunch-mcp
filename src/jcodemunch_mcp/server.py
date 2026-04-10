@@ -1807,32 +1807,117 @@ a query like `"list repos"` or `"search symbols"` to load the full schema before
 Set `discovery_hint: false` in config.jsonc to suppress the reminder in tool descriptions.
 """
 
+_EXPLORE_PROMPT_TEXT = """\
+# Explore — Build a mental model of an unfamiliar repo
+
+Goal: Onboard to a repo you've never seen before.
+
+1. **list_repos** → check if indexed. If not, run **index_folder** (local) or **index_repo** (GitHub).
+2. **get_repo_outline** → directory structure, languages, most-imported files, most-central symbols (PageRank).
+3. **get_repo_health** → dead code %, avg complexity, hotspots, dependency cycles, unstable modules.
+4. **get_file_outline** on the 2–3 most-central files → understand the core.
+5. **get_class_hierarchy** → inheritance structure (if OOP codebase).
+6. **get_dependency_graph** on the entry point file (`direction="importers"`, `depth=2`) → what depends on the core.
+7. **search_symbols** with `sort_by="centrality"` → find the most important symbols across the repo.
+"""
+
+_ASSESS_PROMPT_TEXT = """\
+# Assess — Pre-merge impact analysis
+
+Goal: Understand the blast radius of a change before merging.
+
+1. **get_changed_symbols** → map the git diff to added/removed/modified/renamed symbols.
+2. **get_blast_radius** on each changed file → depth-scored transitive impact + `has_test_reach` per file.
+3. **get_impact_preview** on key changed symbols → "what breaks?" analysis.
+4. **check_rename_safe** if any symbols were renamed → verify no broken refs.
+5. **get_untested_symbols** on affected files → flag unreached symbols in the blast radius.
+6. **get_coupling_metrics** on changed files → check if the change increases coupling.
+7. **get_dependency_cycles** → check if the change introduces new cycles.
+"""
+
+_TRIAGE_PROMPT_TEXT = """\
+# Triage — Diagnose a repo's code quality
+
+Goal: Get a complete health picture in one guided session.
+
+1. **get_repo_health** → one-call snapshot (dead code %, complexity, hotspots, cycles, unstable modules).
+2. **find_dead_code** with `min_confidence=0.8` → high-confidence dead code candidates for removal.
+3. **get_untested_symbols** → functions with no test-file reachability.
+4. **get_dependency_cycles** → full cycle list with file paths.
+5. **get_hotspots** with `top_n=10`, `days=90` → highest-risk symbols by complexity × churn.
+6. **get_layer_violations** → architectural boundary violations.
+7. **get_extraction_candidates** → functions that should be refactored out.
+8. **get_coupling_metrics** on hotspot files → instability analysis.
+"""
+
+_TRACE_PROMPT_TEXT = """\
+# Trace — Investigate a bug through the call graph
+
+Goal: Follow a suspected bug from symptom to root cause.
+
+1. **search_symbols** for the function name or error message keyword.
+2. **get_symbol_source** on the suspect symbol → read the implementation.
+3. **get_call_hierarchy** with `direction="callers"`, `depth=3` → who calls this?
+4. **get_call_hierarchy** with `direction="callees"`, `depth=2` → what does it call?
+5. **get_context_bundle** on the suspect symbol → full source + imports in one call.
+6. **find_references** for the symbol name → all files that reference it.
+7. **get_blast_radius** on the suspect file → what else could be affected?
+8. **get_symbol_diff** if a recent change is suspected → compare current vs. previous version.
+"""
+
 
 @server.list_prompts()
 async def list_prompts() -> list[Prompt]:
-    """Return the workflow guidance prompt."""
+    """Return available workflow guidance prompts."""
     return [
         Prompt(
             name="workflow",
             description="Step-by-step guide for using jcodemunch-mcp tools in Claude Code.",
-        )
+        ),
+        Prompt(
+            name="explore",
+            description="Build a mental model of an unfamiliar repo.",
+        ),
+        Prompt(
+            name="assess",
+            description="Pre-merge impact analysis — blast radius, reachability, coupling.",
+        ),
+        Prompt(
+            name="triage",
+            description="Diagnose a repo's code quality — dead code, hotspots, cycles.",
+        ),
+        Prompt(
+            name="trace",
+            description="Investigate a bug through the call graph from symptom to root cause.",
+        ),
     ]
+
+
+_PROMPT_MAP: dict[str, tuple[str, str]] = {
+    "workflow": (_WORKFLOW_PROMPT_TEXT, "jcodemunch-mcp workflow guide for Claude Code."),
+    "explore": (_EXPLORE_PROMPT_TEXT, "Explore — build a mental model of an unfamiliar repo."),
+    "assess": (_ASSESS_PROMPT_TEXT, "Assess — pre-merge impact analysis."),
+    "triage": (_TRIAGE_PROMPT_TEXT, "Triage — diagnose a repo's code quality."),
+    "trace": (_TRACE_PROMPT_TEXT, "Trace — investigate a bug through the call graph."),
+}
 
 
 @server.get_prompt()
 async def get_prompt(name: str, arguments: dict | None = None) -> GetPromptResult:
     """Return the requested prompt content."""
-    if name == "workflow":
-        return GetPromptResult(
-            description="jcodemunch-mcp workflow guide for Claude Code.",
-            messages=[
-                PromptMessage(
-                    role="user",
-                    content=TextContent(type="text", text=_WORKFLOW_PROMPT_TEXT),
-                )
-            ],
-        )
-    raise ValueError(f"Unknown prompt: {name}")
+    entry = _PROMPT_MAP.get(name)
+    if entry is None:
+        raise ValueError(f"Unknown prompt: {name}")
+    text, description = entry
+    return GetPromptResult(
+        description=description,
+        messages=[
+            PromptMessage(
+                role="user",
+                content=TextContent(type="text", text=text),
+            )
+        ],
+    )
 
 
 @server.call_tool(validate_input=False)

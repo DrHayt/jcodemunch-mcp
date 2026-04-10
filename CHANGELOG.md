@@ -2,6 +2,11 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.24.5] — 2026-04-10
+
+### Added
+- **Guided workflow prompts**: 4 new MCP prompt templates alongside the existing `workflow` prompt — `explore` (onboard to an unfamiliar repo), `assess` (pre-merge impact analysis), `triage` (diagnose code quality), `trace` (investigate a bug through the call graph). Each composes existing jcodemunch tools into a step-by-step workflow. Accessible via the MCP prompt protocol (`list_prompts` / `get_prompt`)
+
 ## [1.24.4] — 2026-04-10
 
 ### Added
