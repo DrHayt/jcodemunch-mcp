@@ -447,6 +447,7 @@ class WatcherManager:
         follow_symlinks: bool = False,
         quiet: bool = False,
         log_file_handle: Optional[IO] = None,
+        on_reindex: Optional[Callable[[], None]] = None,
     ) -> None:
         self._active: dict[str, asyncio.Task] = {}
         self._watched: set[str] = set()
@@ -462,6 +463,7 @@ class WatcherManager:
         self._follow_symlinks = follow_symlinks
         self._quiet = quiet
         self._log_file_handle = log_file_handle
+        self._on_reindex = on_reindex
         self._stop_event: Optional[asyncio.Event] = None
 
     # ── Public API ──────────────────────────────────────────────────────────
@@ -500,6 +502,7 @@ class WatcherManager:
                     storage_path=self._storage_path,
                     extra_ignore_patterns=self._extra_ignore_patterns,
                     follow_symlinks=self._follow_symlinks,
+                    on_reindex=self._on_reindex,
                     quiet=self._quiet,
                     log_file_handle=self._log_file_handle,
                 ),
@@ -743,6 +746,13 @@ async def watch_folders(
             for sig in (signal.SIGINT, signal.SIGTERM):
                 loop.add_signal_handler(sig, stop_event.set)
 
+    # Idle timeout tracking (must be created before manager so on_reindex works)
+    last_reindex_time = time.monotonic()
+
+    def update_reindex_time() -> None:
+        nonlocal last_reindex_time
+        last_reindex_time = time.monotonic()
+
     # Create WatcherManager and add initial paths
     manager = WatcherManager(
         debounce_ms=debounce_ms,
@@ -752,6 +762,7 @@ async def watch_folders(
         follow_symlinks=follow_symlinks,
         quiet=quiet,
         log_file_handle=_watcher_output_stream,
+        on_reindex=update_reindex_time,
     )
     manager._stop_event = stop_event  # inject stop_event for run() loop
 
@@ -762,9 +773,6 @@ async def watch_folders(
     if not manager._watched:
         _watcher_output("All folders already have active watchers.", quiet=quiet, log_file_handle=_watcher_output_stream)
         return
-
-    # Idle timeout tracking
-    last_reindex_time = time.monotonic()
 
     # Create manager run task for monitoring crashed tasks
     manager_task = asyncio.create_task(
@@ -802,17 +810,24 @@ async def watch_folders(
     try:
         _watcher_output("\nShutting down watchers...", quiet=quiet, log_file_handle=_watcher_output_stream)
         manager.stop()
+        # Cancel all individual watch tasks
+        watch_tasks = list(manager._active.values())
+        for t in watch_tasks:
+            t.cancel()
         # Release all locks synchronously (original behavior)
         # This must happen BEFORE returning, not as background tasks
         for folder in list(manager._locked):
             _release_lock(folder, storage_path)
-        # Cancel async tasks
+        # Cancel manager and watchdog tasks
         manager_task.cancel()
         if watchdog_task:
             watchdog_task.cancel()
-        # Note: do NOT await done_waiter or stop_waiter after cancelling —
-        # in Python 3.14, awaiting a cancelled waiter raises CancelledError
-        # even with return_exceptions=True. Just cancel and let them be GC'd.
+        # Await all tasks for clean shutdown
+        await asyncio.gather(
+            *watch_tasks, manager_task,
+            *([] if watchdog_task is None else [watchdog_task]),
+            return_exceptions=True,
+        )
     finally:
         # Print "Done." before closing handlers (stream is still open)
         _watcher_output("Done.", quiet=quiet, log_file_handle=_watcher_output_stream if log_file else None)
