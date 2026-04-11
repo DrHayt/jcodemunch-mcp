@@ -2,6 +2,20 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.33.0] — 2026-04-11
+
+### Added
+- **Auto-watch on demand** ([#233](https://github.com/jgravelle/jcodemunch-mcp/pull/233)): when `watch: true` is set in config (or `JCODEMUNCH_WATCH=1`), the server automatically reindexes and starts watching any unwatched repo before a tool executes. Eliminates silent-stale-data that causes LLMs to abandon jcodemunch tools for the session. Race-safe via `asyncio.Condition` — concurrent tool calls to the same unwatched repo trigger only one reindex
+- **`WatcherManager` class** (`watcher.py`): manages dynamic folder watching with `add_folder()`, `remove_folder()`, `is_watched()` (O(1)), `list_folders()`, `ensure_indexed()` (race-safe), and `run()` (crash recovery). Replaces direct task manipulation in `watch_folders()`
+- **`get_source_root()`** (`sqlite_store.py`): lightweight metadata-only SQLite query to resolve repo ID to folder path without loading full `CodeIndex`
+- **`watch` config key**: opt-in via `watch: true` in config.jsonc or `JCODEMUNCH_WATCH=1` env var (default: `false`)
+- 15 new tests in `tests/test_watcher_dynamic.py` covering manager lifecycle, race guard, and auto-watch integration
+
+### Fixed
+- Restarted watch tasks (crash recovery in `WatcherManager.run()`) now receive the `on_reindex` callback — previously dropped, causing idle-timeout to fire prematurely after a task restart
+- `_pending_results` dict in `WatcherManager.ensure_indexed()` no longer leaks — entries are popped after concurrent waiters consume them
+- Individual `_watch_single` tasks are now explicitly cancelled and awaited during `watch_folders` shutdown (previously only manager/watchdog tasks were cancelled)
+
 ## [1.32.1] — 2026-04-10
 
 ### Fixed
