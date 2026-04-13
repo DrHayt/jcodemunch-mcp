@@ -2,6 +2,11 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.39.0] — 2026-04-13
+
+### Added
+- **Codebase Q&A CLI (`gcm`)** — ask any question about any codebase, get an answer in under 3 seconds. Powered by jCodeMunch retrieval + Groq inference. Install with `pip install jcodemunch-mcp[groq]`. Supports GitHub repos (`--repo owner/name`), local directories, streaming output, interactive `--chat` mode, `--fast` flag for 8B model, and configurable token budget. Auto-indexes on first use.
+
 ## [1.38.0] — 2026-04-13
 
 ### Added

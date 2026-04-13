@@ -18,6 +18,11 @@ src/jcodemunch_mcp/
   cli/
     init.py            # `jcodemunch-mcp init` — one-command onboarding (client detection, config patching, CLAUDE.md, Cursor rules, Windsurf rules, hooks); --demo flag
     hooks.py           # PreToolUse (Read interceptor) + PostToolUse (auto-reindex) + PreCompact (session snapshot) + TaskCompleted (post-task diagnostics) + SubagentStart (repo briefing) hook handlers for Claude Code
+  groq/
+    cli.py             # `gcm` CLI entrypoint — codebase Q&A (single question + --chat mode)
+    config.py          # GcmConfig dataclass: GROQ_API_KEY, model, token_budget, system prompt
+    retriever.py       # Bridge to jCodeMunch: ensure_indexed(), retrieve_context()
+    inference.py       # Groq API streaming + batch via OpenAI-compatible client
   parser/
     languages.py       # LANGUAGE_REGISTRY, extension → language map, LanguageSpec
     extractor.py       # parse_file() dispatch; custom parsers for Erlang, Fortran, SQL, Razor

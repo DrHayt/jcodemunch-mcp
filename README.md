@@ -381,6 +381,29 @@ Get a structured PR review in under 5 seconds:
 
 See **[speedreview/README.md](speedreview/README.md)** for full setup and configuration.
 
+### gcm — Codebase Q&A CLI
+
+Ask any question about any codebase. Get an answer in under 3 seconds.
+
+```bash
+pip install jcodemunch-mcp[groq]
+export GROQ_API_KEY=gsk_...
+
+# Ask about a GitHub repo (auto-indexes on first use)
+gcm "how does authentication work?" --repo pallets/flask
+
+# Ask about the current directory
+gcm "where are the API routes defined?"
+
+# Interactive chat mode
+gcm --chat --repo facebook/react
+
+# Use the fast 8B model
+gcm "what does parse_file do?" --fast
+```
+
+Combines jCodeMunch's token-efficient retrieval (BM25 + PageRank) with Groq's 280+ tok/s inference for near-instant answers. See `gcm --help` for all options.
+
 ---
 
 ## Configuration
