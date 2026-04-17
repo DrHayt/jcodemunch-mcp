@@ -2,6 +2,11 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.56.0] — 2026-04-17
+
+### Changed
+- **MUNCH generic fallback hardened (phase 3)** — the shape-sniffer that covers every tool without a hand-tuned encoder now produces fully round-trippable output. Original table keys, column order, and per-column types (int / float / bool / str) are preserved via an embedded schema line instead of being emitted under synthesized `table_<tag>` keys. Top-level scalars now round-trip with their original types via a compact companion `__stypes` map. Nested `dict` values containing list-of-dicts children are flattened with a dotted key so downstream tools can still read them. Path-prefix legend promotion widened and byte-threshold tightened so interning only fires when it actually saves bytes. Table-tag alphabet widened from 7 to 26 and the tag-vs-scalar classifier rewritten against the `<char>,` CSV leading-byte signal so scalar keys can freely start with any letter. Malformed or pathological shapes (mixed arrays, oversized table counts, short lists) fall through to JSON-blob passthrough instead of crashing; the savings gate still discards compact output whenever it isn't a net win, so the fallback remains safe to fail-open across all 65+ tools without custom encoders.
+
 ## [1.55.0] — 2026-04-17
 
 ### Added

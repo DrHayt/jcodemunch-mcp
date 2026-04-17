@@ -44,12 +44,13 @@ def test_generic_encoding_round_trip():
     payload, meta = encode_response("demo", resp, "compact")
     assert isinstance(payload, str)
     rehydrated = decode_munch(payload)
-    # Generic decoder emits tables under table_<tag>; values match after rehydrate.
+    # Generic decoder preserves original top-level keys and column types.
     assert rehydrated["repo"] == "myapp"
-    assert rehydrated["depth"] == "3"
-    tables = [v for k, v in rehydrated.items() if k.startswith("table_")]
-    assert tables, "expected at least one table in decoded output"
-    assert any(r["file"] == "src/service/auth.py" for r in tables[0])
+    assert rehydrated["depth"] == 3
+    assert "references" in rehydrated
+    rows = rehydrated["references"]
+    assert any(r["file"] == "src/service/auth.py" for r in rows)
+    assert all(isinstance(r["line"], int) for r in rows)
 
 
 def test_auto_emits_compact_on_big_response():

@@ -1,25 +1,30 @@
 """Generic fallback encoder — shape-sniffer for tools without a custom schema.
 
-Strategy:
-    * Walk the response dict once; separate scalar top-level fields from
-      array-of-homogeneous-dicts tables.
-    * For each table, intern repeated string values (paths, symbol names)
-      that benefit from legend substitution.
-    * Emit MUNCH with a tag per table: 't' + letter per table index.
+Walks a response dict once, separates scalars from array-of-dict tables, interns
+repeated path-like strings, and emits a round-trippable MUNCH payload. Original
+keys, column order, and per-column types are preserved in an embedded schema
+line so decode fully reconstructs the response.
 
-Round-trip is best-effort. Types are preserved only for columns declared
-at encode time in an embedded type line; columns not declared decode as
-strings. Use custom per-tool encoders when strict round-trip matters.
+Round-trip guarantees:
+    * Top-level scalars: str/int/float/bool/None preserved by type.
+    * Homogeneous list-of-dict tables: original key, column order, and column
+      types preserved; repeated path prefixes shared via legend.
+    * Nested dict whose values are themselves tables: flattened with dotted key.
+    * Anything else (mixed arrays, deeply nested dicts) falls through as a JSON
+      literal scalar — preserved but uncompressed.
+
+When shape detection fails entirely the dispatcher's savings gate will discard
+the compact output and re-emit JSON, so this encoder is safe to fail-open.
 """
 
 from __future__ import annotations
 
+import json as _json
 from typing import Any
 
 from .format import (
     Legends,
     assemble,
-    encode_scalar,
     parse_header,
     parse_scalars,
     read_table,
@@ -31,8 +36,21 @@ from .format import (
 
 ENCODING_ID = "gen1"
 
-_TABLE_TAGS = "tuvwxyz"
+# One-char tags for tables. Lowercase letters minus those likely to collide with
+# scalar keys starting the first line of a scalar block.
+_TABLE_TAGS = "tuvwxyzabcdefghijklmnopqrs"
 _MIN_TABLE_ROWS = 2
+_RESERVED_SCALAR_KEYS = ("__tables", "__stypes")
+
+
+def _scalar_type(v: Any) -> str:
+    if isinstance(v, bool):
+        return "bool"
+    if isinstance(v, int):
+        return "int"
+    if isinstance(v, float):
+        return "float"
+    return "str"
 
 
 def _is_homogeneous_dict_array(value: Any) -> bool:
@@ -44,13 +62,44 @@ def _is_homogeneous_dict_array(value: Any) -> bool:
     return all(tuple(x.keys()) == first_keys for x in value)
 
 
-def _collect_prefixes(samples: list[str], min_len: int = 6) -> list[str]:
-    """Find common path-like prefixes from a list of strings."""
+def _infer_col_types(rows: list[dict], cols: list[str]) -> dict[str, str]:
+    """Infer a type per column by scanning non-null samples."""
+    types: dict[str, str] = {}
+    for c in cols:
+        seen: set[str] = set()
+        for r in rows:
+            v = r.get(c)
+            if v is None:
+                continue
+            if isinstance(v, bool):
+                seen.add("bool")
+            elif isinstance(v, int):
+                seen.add("int")
+            elif isinstance(v, float):
+                seen.add("float")
+            else:
+                seen.add("str")
+            if len(seen) > 1:
+                break
+        if not seen or "str" in seen:
+            types[c] = "str"
+        elif seen == {"bool"}:
+            types[c] = "bool"
+        elif seen == {"int"}:
+            types[c] = "int"
+        elif seen == {"float"} or seen == {"int", "float"}:
+            types[c] = "float"
+        else:
+            types[c] = "str"
+    return types
+
+
+def _collect_prefixes(samples: list[str], min_len: int = 6) -> dict[str, int]:
+    """Count path-like prefixes across samples for legend promotion."""
     buckets: dict[str, int] = {}
     for s in samples:
         if not isinstance(s, str) or len(s) < min_len:
             continue
-        # progressive prefixes split on / or \
         pos = 0
         while True:
             nxt = min(
@@ -63,97 +112,217 @@ def _collect_prefixes(samples: list[str], min_len: int = 6) -> list[str]:
             if len(prefix) >= min_len:
                 buckets[prefix] = buckets.get(prefix, 0) + 1
             pos = nxt
-    return sorted(buckets, key=lambda p: -buckets[p] * len(p))
+    return buckets
+
+
+def _coerce(raw: str, hint: str) -> Any:
+    if raw == "":
+        return None
+    if hint == "bool":
+        return raw == "T"
+    if hint == "int":
+        try:
+            return int(raw)
+        except ValueError:
+            return raw
+    if hint == "float":
+        try:
+            return float(raw)
+        except ValueError:
+            return raw
+    return raw
+
+
+def _walk_tables(response: dict) -> tuple[list[tuple[str, list[dict]]], dict[str, Any]]:
+    """Return (tables, leftover_scalars).
+
+    Tables are (flat_key, rows). Nested dicts whose sole notable content is a
+    list-of-dicts get flattened with a dotted key. Everything else lands in
+    leftover_scalars where the main encode path decides scalar vs JSON blob.
+    """
+    tables: list[tuple[str, list[dict]]] = []
+    leftovers: dict[str, Any] = {}
+    for key, value in response.items():
+        if key in _RESERVED_SCALAR_KEYS:
+            continue
+        if _is_homogeneous_dict_array(value):
+            tables.append((key, value))
+            continue
+        if isinstance(value, dict):
+            inner_tables: list[tuple[str, list[dict]]] = []
+            inner_rest: dict[str, Any] = {}
+            for sub_k, sub_v in value.items():
+                if _is_homogeneous_dict_array(sub_v):
+                    inner_tables.append((f"{key}.{sub_k}", sub_v))
+                else:
+                    inner_rest[sub_k] = sub_v
+            if inner_tables:
+                tables.extend(inner_tables)
+                if inner_rest:
+                    leftovers[key] = inner_rest
+                continue
+        leftovers[key] = value
+    return tables, leftovers
 
 
 def encode(tool_name: str, response: dict) -> tuple[str, str]:
-    scalars: dict[str, Any] = {}
-    tables: list[tuple[str, list[str], list[dict]]] = []
-    tag_iter = iter(_TABLE_TAGS)
+    tables_raw, leftovers = _walk_tables(response)
 
-    for key, value in response.items():
-        if _is_homogeneous_dict_array(value):
-            try:
-                tag = next(tag_iter)
-            except StopIteration:
-                scalars[key] = "[omitted: table-tag exhaustion]"
-                continue
-            cols = list(value[0].keys())
-            tables.append((tag, cols, value))
-        elif isinstance(value, (str, int, float, bool)) or value is None:
-            scalars[key] = value
-        else:
-            # nested dicts or mixed arrays fall back to JSON literal
-            import json as _json
-            scalars[key] = _json.dumps(value, separators=(",", ":"))
+    # Cap table count at available tags; excess collapses back into JSON blobs.
+    if len(tables_raw) > len(_TABLE_TAGS):
+        overflow = tables_raw[len(_TABLE_TAGS):]
+        tables_raw = tables_raw[:len(_TABLE_TAGS)]
+        for k, v in overflow:
+            leftovers[k] = v
 
-    # Build path legend from string-valued table columns
-    path_legend = Legends(prefix="@")
-    for _, _, rows in tables:
+    tables: list[tuple[str, str, list[str], dict[str, str], list[dict]]] = []
+    for i, (key, rows) in enumerate(tables_raw):
+        tag = _TABLE_TAGS[i]
+        cols = list(rows[0].keys())
+        types = _infer_col_types(rows, cols)
+        tables.append((tag, key, cols, types, rows))
+
+    # Build path legend from string values across table rows.
+    legend = Legends(prefix="@")
+    all_strings: list[str] = []
+    for _, _, cols, types, rows in tables:
         for row in rows:
-            for v in row.values():
-                if isinstance(v, str):
-                    path_legend.observe(v)
-    for prefix in _collect_prefixes(list(path_legend._counts.keys())):
-        path_legend._counts.setdefault(prefix, 2)
-        path_legend._order.insert(0, prefix)
-    # De-duplicate while preserving first occurrence
-    seen: set[str] = set()
-    path_legend._order = [x for x in path_legend._order if not (x in seen or seen.add(x))]
-    path_legend.finalize()
+            for c in cols:
+                if types[c] != "str":
+                    continue
+                v = row.get(c)
+                if isinstance(v, str) and v:
+                    legend.observe(v)
+                    all_strings.append(v)
+    for prefix, count in _collect_prefixes(all_strings).items():
+        if count >= 2:
+            existing = legend._counts.get(prefix, 0)
+            legend._counts[prefix] = max(existing, count)
+            if prefix not in legend._order:
+                legend._order.append(prefix)
+    legend.finalize(min_uses=2, min_chars_saved=2)
 
-    # Scalar section also encodes the table column schema so decode can reverse
-    scalars["__tables"] = ",".join(f"{tag}:{'|'.join(cols)}" for tag, cols, _ in tables)
+    # Scalar section
+    scalar_out: dict[str, Any] = {}
+    scalar_types: dict[str, str] = {}
+    for k, v in leftovers.items():
+        if isinstance(v, (str, int, float, bool)) or v is None:
+            scalar_out[k] = v
+            if v is not None and not isinstance(v, str):
+                scalar_types[k] = _scalar_type(v)
+        else:
+            scalar_out[f"__json.{k}"] = _json.dumps(v, separators=(",", ":"))
+    if scalar_types:
+        scalar_out["__stypes"] = "|".join(f"{k}:{t}" for k, t in scalar_types.items())
+
+    # Embed table schema: tag:key:col1|col2|...:type1|type2|...
+    schema_parts: list[str] = []
+    for tag, key, cols, types, _ in tables:
+        type_list = "|".join(types[c] for c in cols)
+        schema_parts.append(f"{tag}:{key}:{'|'.join(cols)}:{type_list}")
+    scalar_out["__tables"] = ",".join(schema_parts)
 
     sections: list[str] = []
-    legend_text = path_legend.write()
-    if legend_text:
-        sections.append(legend_text)
-    sections.append(write_scalars(scalars))
-    for tag, cols, rows in tables:
-        data_rows = [
-            [path_legend.encode_prefix(v) if isinstance(v, str) else v for v in (r[c] for c in cols)]
-            for r in rows
-        ]
+    leg_text = legend.write()
+    if leg_text:
+        sections.append(leg_text)
+    sections.append(write_scalars(scalar_out))
+
+    for tag, _key, cols, types, rows in tables:
+        data_rows: list[list[Any]] = []
+        for r in rows:
+            encoded_row: list[Any] = []
+            for c in cols:
+                v = r.get(c)
+                if types[c] == "str" and isinstance(v, str):
+                    v = legend.encode_prefix(v)
+                encoded_row.append(v)
+            data_rows.append(encoded_row)
         sections.append(write_table(tag, data_rows))
 
     header = write_header(tool_name, ENCODING_ID)
-    payload = assemble(header, *sections)
-    return payload, ENCODING_ID
+    return assemble(header, *sections), ENCODING_ID
 
 
 def decode(payload: str) -> dict:
     head, blocks = split_sections(payload)
-    parse_header(head)  # validate
+    parse_header(head)
+
     legend = Legends(prefix="@")
-    scalar_text = ""
+    scalar_block: str | None = None
     table_blocks: list[str] = []
     for b in blocks:
-        if b.startswith("@"):
+        lines = b.splitlines()
+        if not lines:
+            continue
+        first = lines[0]
+        is_table_row = len(first) >= 2 and first[1] == "," and first[0] in _TABLE_TAGS
+        if first.startswith("@") and "=" in first and not is_table_row:
             legend = Legends.read(b, prefix="@")
-        elif "=" in b.splitlines()[0] and not b.splitlines()[0].startswith(tuple(_TABLE_TAGS) + ("#",)):
-            scalar_text = b
+        elif is_table_row:
+            table_blocks.append(b)
+        elif scalar_block is None and "=" in first:
+            scalar_block = b
         else:
             table_blocks.append(b)
 
-    scalars = parse_scalars(scalar_text) if scalar_text else {}
-    table_spec = scalars.pop("__tables", "")
-    schemas: dict[str, list[str]] = {}
-    for part in [p for p in table_spec.split(",") if p]:
-        tag, _, cols = part.partition(":")
-        schemas[tag] = cols.split("|")
+    raw_scalars = parse_scalars(scalar_block) if scalar_block else {}
+    schema_text = raw_scalars.pop("__tables", "")
+    stypes_text = raw_scalars.pop("__stypes", "")
+    scalar_type_map: dict[str, str] = {}
+    for part in [p for p in stypes_text.split("|") if p]:
+        name, _, hint = part.partition(":")
+        if name and hint:
+            scalar_type_map[name] = hint
 
-    result: dict[str, Any] = dict(scalars)
-    for block in table_blocks:
-        for tag, cols in schemas.items():
+    schemas: list[tuple[str, str, list[str], list[str]]] = []
+    for part in [p for p in schema_text.split(",") if p]:
+        pieces = part.split(":")
+        if len(pieces) < 3:
+            continue
+        tag, key, col_spec = pieces[0], pieces[1], pieces[2]
+        type_spec = pieces[3] if len(pieces) >= 4 else ""
+        cols = col_spec.split("|") if col_spec else []
+        types = type_spec.split("|") if type_spec else ["str"] * len(cols)
+        if len(types) < len(cols):
+            types = types + ["str"] * (len(cols) - len(types))
+        schemas.append((tag, key, cols, types))
+
+    result: dict[str, Any] = {}
+    for k, v in raw_scalars.items():
+        if k.startswith("__json."):
+            real = k[len("__json."):]
+            try:
+                result[real] = _json.loads(v)
+            except Exception:
+                result[real] = v
+        elif k in scalar_type_map:
+            result[k] = _coerce(v, scalar_type_map[k])
+        else:
+            result[k] = v
+
+    for tag, key, cols, types in schemas:
+        rows_out: list[dict[str, Any]] = []
+        for block in table_blocks:
             rows = read_table(block, tag)
             if not rows:
                 continue
-            # find the outer key this table belonged to — not recoverable
-            # from the tag alone. Generic decode emits under "table_<tag>".
-            out_key = f"table_{tag}"
-            result[out_key] = [
-                {c: legend.decode_prefix(v) for c, v in zip(cols, r)}
-                for r in rows
-            ]
+            for r in rows:
+                row_dict: dict[str, Any] = {}
+                for i, c in enumerate(cols):
+                    raw = r[i] if i < len(r) else ""
+                    hint = types[i] if i < len(types) else "str"
+                    if hint == "str" and isinstance(raw, str):
+                        raw = legend.decode_prefix(raw)
+                    row_dict[c] = _coerce(raw, hint)
+                rows_out.append(row_dict)
+        # Support dotted keys created by nested-dict flattening.
+        if "." in key:
+            parent, _, child = key.partition(".")
+            result.setdefault(parent, {})
+            if isinstance(result[parent], dict):
+                result[parent][child] = rows_out
+        else:
+            result[key] = rows_out
+
     return result
