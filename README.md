@@ -517,6 +517,42 @@ Project config merges over global config — closest to the work wins.
 
 See the full template for all available keys. Run `jcodemunch-mcp config --init` to generate one.
 
+### Tool Tiering
+
+jcodemunch-mcp exposes 80+ tools. On request-capped plans, having all of them visible to small models causes primitive-preference bias (many `search → read → search → read` cycles instead of one `get_context_bundle`). The server mitigates this by narrowing the exposed tool list per the running model.
+
+#### Tiers (configurable)
+
+Three tiers ship with sensible defaults, fully editable in `config.jsonc`:
+
+- `core` (~16 tools): indexing, search, retrieval. Recommended for Haiku / small local models.
+- `standard` (~51 tools): core + analytics / architecture / quality. Recommended for Sonnet / GPT-4o class.
+- `full` (all tools): no filter. Recommended for Opus / o1 / frontier models.
+
+Edit `tool_tier_bundles.core` / `tool_tier_bundles.standard` in your `config.jsonc` to add or remove tools from each tier.
+
+#### Runtime switching (opt-in, zero extra requests)
+
+Runtime tier switching is **off by default**. To enable it, set in `config.jsonc`:
+
+```jsonc
+"adaptive_tiering": true
+```
+
+When on, `plan_turn` — already the opening-move tool — accepts an optional `model` parameter that switches the session tier as a side effect, with **no extra MCP request**:
+
+```
+plan_turn(repo="...", query="...", model="claude-haiku-4-5")
+```
+
+The server resolves the model to a tier via `model_tier_map` in config (fuzzy matching: normalizes the id, then exact → glob → substring → `*` → `full` fallback). Subsequent `tools/list` calls return only the narrowed set.
+
+When `adaptive_tiering` is false, `plan_turn(model=...)` and `announce_model(...)` accept their arguments but do not switch the tier — the static `tool_profile` continues to drive the exposed tools. `set_tool_tier(tier=...)` remains honored either way because it's an explicit user call, not automatic behavior.
+
+#### `disabled_tools` precedence
+
+`disabled_tools` applies **after** tier filtering. A tool listed in both a tier bundle and `disabled_tools` will not be exposed. The server logs a `WARNING` on startup and `jcodemunch-mcp config --check` prints a `WARN:` row if this happens.
+
 ### Architecture layer enforcement (`architecture.layers`)
 
 Place a `.jcodemunch.jsonc` file at your project root to declare the layers your architecture must respect. `get_layer_violations` will then enforce that imports only flow in the declared direction.

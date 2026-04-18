@@ -4323,6 +4323,29 @@ def _run_config(check: bool = False, init: bool = False, upgrade: bool = False) 
     disabled = _cfg.get("disabled_tools", [])
     row("disabled_tools", _fmt_list(disabled) if disabled else dim("(none)"), _detect_source("disabled_tools", []))
 
+    # ── Tool Tiering ──────────────────────────────────────────────────────
+    section("Tool Tiering")
+    adaptive = _cfg.get("adaptive_tiering", False)
+    row("adaptive_tiering", green("enabled") if adaptive else dim("disabled"), _detect_source("adaptive_tiering", False))
+    bundles = _cfg.get("tool_tier_bundles") or {}
+    if isinstance(bundles, dict):
+        for tier_name in ("core", "standard"):
+            tools_in_tier = bundles.get(tier_name, [])
+            if isinstance(tools_in_tier, list):
+                row(f"  {tier_name} tier", f"{len(tools_in_tier)} tools", "config")
+    # Check for bundle/disabled overlap
+    from .tier_resolver import validate_bundle_disabled_overlap
+    overlap_cfg = {
+        "tool_tier_bundles": bundles,
+        "disabled_tools": disabled,
+    }
+    overlap_warnings = validate_bundle_disabled_overlap(overlap_cfg)
+    if overlap_warnings:
+        for msg in overlap_warnings:
+            print(f"  {WARN} {yellow(msg)}")
+    else:
+        print(f"  {CHECK} {green('No bundle/disabled_tools overlap')}")
+
     # ── Descriptions ──────────────────────────────────────────────────────
     section("Descriptions")
     descs = _cfg.get("descriptions", {})
