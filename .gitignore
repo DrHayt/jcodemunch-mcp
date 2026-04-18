@@ -71,3 +71,6 @@ index.php
 # Git worktrees (isolated feature workspaces)
 .worktrees/
 .claudeignore
+
+# Local docs notes
+docs/
