@@ -1120,3 +1120,45 @@ async def test_compact_schemas_off_preserves_all_params():
     finally:
         config_module._GLOBAL_CONFIG.clear()
         config_module._GLOBAL_CONFIG.update(orig_config)
+
+
+# --------------------------------------------------------------------------- #
+# Tool tier bundles + model tier map                                           #
+# --------------------------------------------------------------------------- #
+
+def test_tool_tier_bundles_default_present():
+    """DEFAULTS must ship with tool_tier_bundles pre-populated for core and standard."""
+    from jcodemunch_mcp.config import DEFAULTS
+
+    bundles = DEFAULTS["tool_tier_bundles"]
+    assert isinstance(bundles, dict)
+    assert "core" in bundles and "standard" in bundles
+    assert isinstance(bundles["core"], list)
+    assert isinstance(bundles["standard"], list)
+    assert "search_symbols" in bundles["core"]
+    assert "get_context_bundle" in bundles["core"]
+    assert "index_folder" in bundles["core"]
+    core_set = set(bundles["core"])
+    std_set = set(bundles["standard"])
+    assert core_set.issubset(std_set), "standard must include all core tools"
+
+
+def test_model_tier_map_default_present():
+    from jcodemunch_mcp.config import DEFAULTS
+
+    mp = DEFAULTS["model_tier_map"]
+    assert isinstance(mp, dict)
+    assert mp["claude-opus"] == "full"
+    assert mp["claude-sonnet"] == "standard"
+    assert mp["claude-haiku"] == "core"
+    assert mp["*"] == "full"
+
+
+def test_adaptive_tiering_defaults_false():
+    from jcodemunch_mcp.config import DEFAULTS
+    assert DEFAULTS["adaptive_tiering"] is False
+
+
+def test_adaptive_tiering_in_config_types():
+    from jcodemunch_mcp.config import CONFIG_TYPES
+    assert CONFIG_TYPES["adaptive_tiering"] is bool
