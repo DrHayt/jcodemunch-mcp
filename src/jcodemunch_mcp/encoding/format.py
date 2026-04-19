@@ -215,6 +215,25 @@ def _iter_kv_tokens(line: str) -> Iterable[tuple[str, str]]:
                         continue
                     i += 1
                     break
+                # Reverse the escapes written by _quote_if_needed so that
+                # scalars containing newlines/carriage returns round-trip
+                # cleanly. The `assemble` / `split_sections` layer splits on
+                # `\n\n`, so raw newlines inside a quoted value would truncate
+                # the scalar block mid-record (audit finding F1).
+                if ch == "\\" and i + 1 < n:
+                    nxt = line[i + 1]
+                    if nxt == "n":
+                        buf.append("\n")
+                        i += 2
+                        continue
+                    if nxt == "r":
+                        buf.append("\r")
+                        i += 2
+                        continue
+                    if nxt == "\\":
+                        buf.append("\\")
+                        i += 2
+                        continue
                 buf.append(ch)
                 i += 1
             yield key, "".join(buf)
@@ -228,8 +247,17 @@ def _iter_kv_tokens(line: str) -> Iterable[tuple[str, str]]:
 def _quote_if_needed(value: str) -> str:
     if value == "":
         return '""'
-    if any(c in value for c in (",", "=", " ", "\t", "\n", '"')):
-        return '"' + value.replace('"', '""') + '"'
+    if any(c in value for c in (",", "=", " ", "\t", "\n", "\r", '"', "\\")):
+        # Escape backslashes first so the follow-up substitutions remain
+        # reversible, then escape the literal newlines that would otherwise
+        # collide with the block separator in `assemble` (audit finding F1).
+        escaped = (
+            value.replace("\\", "\\\\")
+                 .replace('"', '""')
+                 .replace("\n", "\\n")
+                 .replace("\r", "\\r")
+        )
+        return '"' + escaped + '"'
     return value
 
 

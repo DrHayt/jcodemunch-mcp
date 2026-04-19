@@ -143,3 +143,67 @@ def test_generic_many_tables_does_not_crash():
         # At least the first 26 should round-trip as tables.
         present = sum(1 for k in resp if k in out)
         assert present >= 20
+
+
+# ── Audit finding F1: scalar newline escape ────────────────────────────────
+
+@pytest.mark.parametrize("text", [
+    "line1\n\nline3",          # blank-line trigger — the original bug.
+    "single\n",
+    "dos\r\nstyle",
+    "tabs\there",
+    "quote \"inside\" it",
+    "trailing\n\n\n",
+    "\n\n",                      # pathological: literal double-newline value.
+    "pipe|and:colon,and%25",     # non-ASCII meta-chars alongside newlines.
+])
+def test_generic_scalar_newline_roundtrip(text):
+    out = _rt("misc_tool", {"doc": text, "n": 1})
+    assert out["doc"] == text
+    assert out["n"] == 1
+
+
+# ── Audit finding F11: schema-embed separator escape ──────────────────────
+
+def test_generic_schema_key_with_colon_roundtrips():
+    # Nested table under a key containing ':' used to corrupt on decode.
+    resp = {
+        "stats:by_file": {
+            "rows": [
+                {"file": "a.py", "n": 3},
+                {"file": "b.py", "n": 5},
+            ],
+        },
+    }
+    out = _rt("weird_keys", resp)
+    assert out["stats:by_file"]["rows"] == resp["stats:by_file"]["rows"]
+
+
+def test_generic_schema_column_with_pipe_roundtrips():
+    resp = {
+        "rows": [
+            {"col|weird": "a", "value": 1},
+            {"col|weird": "b", "value": 2},
+        ],
+    }
+    out = _rt("pipe_col", resp)
+    assert out["rows"] == resp["rows"]
+
+
+# ── Audit finding F5: nested table + __json.<parent> collision ─────────────
+
+def test_generic_nested_table_coexists_with_scalar_json_parent():
+    # Parent "foo" holds one nested table ("tbl") and one non-uniform list
+    # ("other") which falls into the __json.foo blob. On decode, `foo` gets
+    # restored first as whatever __json.foo produced; the nested-table code
+    # must not silently drop `tbl` when the restored value isn't already a
+    # dict.
+    resp = {
+        "foo": {
+            "tbl": [{"x": 1, "y": 2}, {"x": 3, "y": 4}],
+            "other": [1, "two", {"nested": True}],
+        },
+    }
+    out = _rt("mixed_nest", resp)
+    assert out["foo"]["tbl"] == resp["foo"]["tbl"]
+    assert "other" in out["foo"]

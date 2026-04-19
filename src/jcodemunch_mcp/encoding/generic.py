@@ -43,6 +43,27 @@ _MIN_TABLE_ROWS = 2
 _RESERVED_SCALAR_KEYS = ("__tables", "__stypes")
 
 
+# Percent-encoding of the schema-embed separators so keys/column-names
+# containing ``:``, ``|``, ``,`` (or the escape itself) survive round-trip.
+# Audit finding F11.
+_SCHEMA_ESCAPE = {"%": "%25", ":": "%3A", "|": "%7C", ",": "%2C"}
+_SCHEMA_UNESCAPE = {v: k for k, v in _SCHEMA_ESCAPE.items()}
+
+
+def _escape_schema(s: str) -> str:
+    out = s.replace("%", "%25")
+    out = out.replace(":", "%3A").replace("|", "%7C").replace(",", "%2C")
+    return out
+
+
+def _unescape_schema(s: str) -> str:
+    # Decode in reverse order of escape — %25 last so intermediate %3A / %7C
+    # / %2C that came from the original input don't get re-expanded.
+    out = s.replace("%3A", ":").replace("%7C", "|").replace("%2C", ",")
+    out = out.replace("%25", "%")
+    return out
+
+
 def _scalar_type(v: Any) -> str:
     if isinstance(v, bool):
         return "bool"
@@ -216,10 +237,16 @@ def encode(tool_name: str, response: dict) -> tuple[str, str]:
         scalar_out["__stypes"] = "|".join(f"{k}:{t}" for k, t in scalar_types.items())
 
     # Embed table schema: tag:key:col1|col2|...:type1|type2|...
+    # Keys/columns may contain ':' or '|' (e.g. a dotted key like
+    # "stats:by_file"). Percent-encode those separators so the decoder can
+    # split cleanly (audit finding F11).
     schema_parts: list[str] = []
     for tag, key, cols, types, _ in tables:
-        type_list = "|".join(types[c] for c in cols)
-        schema_parts.append(f"{tag}:{key}:{'|'.join(cols)}:{type_list}")
+        type_list = "|".join(_escape_schema(types[c]) for c in cols)
+        cols_enc = "|".join(_escape_schema(c) for c in cols)
+        schema_parts.append(
+            f"{_escape_schema(tag)}:{_escape_schema(key)}:{cols_enc}:{type_list}"
+        )
     scalar_out["__tables"] = ",".join(schema_parts)
 
     sections: list[str] = []
@@ -280,10 +307,15 @@ def decode(payload: str) -> dict:
         pieces = part.split(":")
         if len(pieces) < 3:
             continue
-        tag, key, col_spec = pieces[0], pieces[1], pieces[2]
+        tag = _unescape_schema(pieces[0])
+        key = _unescape_schema(pieces[1])
+        col_spec = pieces[2]
         type_spec = pieces[3] if len(pieces) >= 4 else ""
-        cols = col_spec.split("|") if col_spec else []
-        types = type_spec.split("|") if type_spec else ["str"] * len(cols)
+        cols = [_unescape_schema(c) for c in col_spec.split("|")] if col_spec else []
+        types = (
+            [_unescape_schema(t) for t in type_spec.split("|")]
+            if type_spec else ["str"] * len(cols)
+        )
         if len(types) < len(cols):
             types = types + ["str"] * (len(cols) - len(types))
         schemas.append((tag, key, cols, types))
@@ -316,12 +348,18 @@ def decode(payload: str) -> dict:
                         raw = legend.decode_prefix(raw)
                     row_dict[c] = _coerce(raw, hint)
                 rows_out.append(row_dict)
-        # Support dotted keys created by nested-dict flattening.
+        # Support dotted keys created by nested-dict flattening. When parent
+        # was already restored from a `__json.<parent>` scalar as a non-dict,
+        # wrap it so we don't silently drop the nested table (audit F5).
         if "." in key:
             parent, _, child = key.partition(".")
-            result.setdefault(parent, {})
-            if isinstance(result[parent], dict):
-                result[parent][child] = rows_out
+            existing = result.get(parent)
+            if not isinstance(existing, dict):
+                if existing is not None:
+                    result[parent] = {"_scalar": existing}
+                else:
+                    result[parent] = {}
+            result[parent][child] = rows_out
         else:
             result[key] = rows_out
 
