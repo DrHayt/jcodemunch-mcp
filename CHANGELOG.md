@@ -2,6 +2,18 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.61.1] — 2026-04-19
+
+Audit remediation — low-risk fixes. No wire-format or session-state
+changes; all installs can upgrade without migration.
+
+### Fixed
+- **`model_tier_map` substring match normalizes both sides (F4, closes #249).** Layer-3 substring matching compared raw config keys against the normalized incoming model id, so provider-prefixed entries like `"anthropic/claude-haiku"` silently failed to match `"claude-haiku-4-5"`. Keys are now normalized the same way incoming ids are before the substring check; longest-match semantics preserved.
+- **Bearer-token redaction requires the `Authorization` anchor (F9).** The previous pattern treated the Authorization prefix as optional, so prose containing the word `Bearer` followed by 20+ word-characters (docstrings, CLI help, example text) tripped redaction. We lose the naked-token-in-prose detection path in exchange for no false positives on ordinary documentation.
+- **Redaction depth cap collapses all scalars past depth 20 (F10).** Past the cap, strings under 16 characters were returned raw on the theory that short strings cannot hold a secret. Recognizable credential prefixes (AWS access-key, GitHub-token prefixes) fit under that limit, so the carve-out leaked them. Any scalar or container at the cap now becomes the `[REDACTED:depth_exceeded]` sentinel.
+- **`render_diagram` edge resolution picks the correct direction (F7).** On mutually-recursive pairs a symbol appears in both `callers` and `callees` with different `resolution` tiers. The edge-style lookup scanned the two lists concatenated and picked whichever id matched first, which surfaced the caller's resolution on every edge touching that symbol. Caller vs callee edges now consult their own list.
+- **`render_diagram` honors `max_nodes` in the `impact_by_depth` branch (F8).** The depth-bucketed rendering ignored `max_nodes` entirely and emitted every file at every depth. Budget is now tracked per bucket; excess accumulates into `pruned_count` instead of blowing past the caller's cap.
+
 ## [1.61.0] — 2026-04-18
 
 ### Added
