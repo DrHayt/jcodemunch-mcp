@@ -314,11 +314,36 @@ pip install jcodemunch-mcp
 
 #### 2. Add it to your MCP client
 
-If you’re using Claude Code:
+If you’re using Claude Code, pick whichever matches what you installed in step 1.
+
+**Pip install (simplest, what most people do):**
 
 ```bash
-claude mcp add jcodemunch uvx jcodemunch-mcp
+claude mcp add -s user jcodemunch jcodemunch-mcp
 ```
+
+The `-s user` flag registers it at user scope so it's available in every
+project. Without it, the registration is project-local and you'll see it
+missing the next time you `cd` elsewhere. If `jcodemunch-mcp` isn't found
+on PATH (common on Windows where `pip install --user` installs to
+`AppData\Roaming\Python\PythonXYZ\Scripts\`), use the absolute path:
+
+```bash
+# Windows
+claude mcp add -s user jcodemunch "C:\Users\YOU\AppData\Roaming\Python\Python312\Scripts\jcodemunch-mcp.exe"
+# macOS/Linux — check `which jcodemunch-mcp` first
+claude mcp add -s user jcodemunch "$(which jcodemunch-mcp)"
+```
+
+**uvx (no pip install required, but uv must be on PATH):**
+
+```bash
+claude mcp add -s user jcodemunch uvx jcodemunch-mcp
+```
+
+If `/mcp` reports `failed` with no reason, run `claude --mcp-debug` or
+check `%USERPROFILE%\AppData\Roaming\Claude\logs\mcp*.log` — the `/mcp`
+summary hides the actual error.
 
 If you’re using **Paperclip** (the multi-agent orchestration platform), add a `.mcp.json` to your workspace root:
 
