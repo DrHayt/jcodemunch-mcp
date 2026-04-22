@@ -1,5 +1,7 @@
 Quickstart - https://github.com/jgravelle/jcodemunch-mcp/blob/main/QUICKSTART.md
 
+A crapload of detailed info: http://jcodemunch.com/
+
 <!-- mcp-name: io.github.jgravelle/jcodemunch-mcp -->
 
 ## FREE FOR PERSONAL USE
