@@ -242,6 +242,16 @@ Useful for onboarding, debugging, refactoring, impact analysis, and exploring un
 signature change operations. Returns `{old_text, new_text}` blocks compatible with any editor's
 find-and-replace, plus import rewrites, collision detection, new file generation, and multi-file coordination.
 
+### Calibrated retrieval signals (v1.74.0+ telemetry initiative)
+
+Every retrieval result now ships with three machine-readable health signals so agents can stop guessing whether to trust the response:
+
+- **`_meta.confidence`** — calibrated 0–1 score combining top-1/top-2 score gap, top-1 strength, identity-match presence, and freshness. Lets an agent gate follow-up `get_symbol_source` calls on a single number.
+- **`_freshness ∈ {fresh, edited_uncommitted, stale_index}`** on every result entry, plus a `_meta.freshness` summary. Derived from index SHA vs `git rev-parse HEAD` and per-file mtime checks.
+- **Per-tool latency telemetry** (`p50/p95/max/error_rate`) exposed via `get_session_stats.latency_per_tool` and the `analyze_perf` tool. Optional SQLite sink (`~/.code-index/telemetry.db`) for cross-session analysis.
+
+The `tune_weights` tool reads the persistent ranking ledger and learns per-repo retrieval weights (saved to `~/.code-index/tuning.jsonc`). `check_embedding_drift` pins a 16-string canary to detect silent provider model changes. `benchmarks/replay/` provides a CI-friendly retrieval-quality regression gate (nDCG/MRR/Recall) that every release runs against.
+
 ### Local-first speed
 
 Indexes are stored locally for fast repeated access.

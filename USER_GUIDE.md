@@ -600,7 +600,19 @@ These IDs stay stable across re-indexing as long as path, qualified name, and ki
 
 | Tool | What it does | Key parameters |
 |------|--------------|----------------|
-| `get_session_stats` | Token savings, cost avoided, and per-tool breakdown for the current session | — |
+| `get_session_stats` | Token savings, cost avoided, per-tool breakdown, and `latency_per_tool` (p50/p95/max/error_rate) for the current session | — |
+| `analyze_perf` | Per-tool latency telemetry + cache hit-rates. Defaults to in-memory session ring; `window=1h\|24h\|7d\|all` reads `~/.code-index/telemetry.db` (opt-in). `compare_release="X.Y.Z"` diffs against a saved token baseline. `ledger=true` summarises ranking events. | `window`, `top`, `tool`, `compare_release`, `ledger` |
+| `tune_weights` | Learn per-repo retrieval weights from the v1.78.0 ranking ledger. Writes `~/.code-index/tuning.jsonc` with `semantic_weight` / `identity_boost` overrides applied at query time. | `repo`, `dry_run`, `min_events`, `explain` |
+| `check_embedding_drift` | Pin (or re-check) a 16-string canary against the active embedding provider. Catches silent provider model changes that quietly degrade hybrid retrieval. | `capture`, `force`, `threshold` |
+
+### Retrieval health signals (v1.74.0+)
+
+Every retrieval response now carries:
+
+- `_meta.confidence` — calibrated 0–1 retrieval-quality score on `search_symbols` / `plan_turn` / `get_ranked_context`. Combine top-1/top-2 score gap, top-1 strength, identity match, and freshness.
+- `_meta.freshness` — `{fresh, edited_uncommitted, stale_index}` counts plus `repo_is_stale` flag derived from index SHA vs `git rev-parse HEAD` and per-file mtime checks.
+- Per-symbol `_freshness` field on each entry — useful when a partial reindex left some files stale.
+
 
 
 

@@ -129,3 +129,31 @@ Every tool response includes real-time savings data in the `_meta` field:
 No extra API calls or file reads — computed using fast `os.stat` only.
 
 ---
+
+## Per-Tool Latency + Drift Tracking (v1.74.0+)
+
+Beyond the savings counter, every `call_tool` invocation is timed and the
+duration recorded into a per-tool ring buffer (cap 512 entries). `get_session_stats`
+exposes a `latency_per_tool` field with `{count, p50_ms, p95_ms, max_ms,
+errors, error_rate}` for every tool exercised this session.
+
+```json
+"latency_per_tool": {
+  "search_symbols": {"count": 42, "p50_ms": 12.4, "p95_ms": 88.1, "max_ms": 312.0, "errors": 0, "error_rate": 0.0}
+}
+```
+
+The `analyze_perf` tool surfaces the slowest tools by p95 and the coldest
+caches by hit-rate; pass `window=1h|24h|7d|all` to read the persistent
+SQLite sink (`~/.code-index/telemetry.db`, opt-in via
+`perf_telemetry_enabled`). Use `compare_release="X.Y.Z"` to diff the
+current session against a saved
+`benchmarks/token_baselines/v{VERSION}.json` snapshot — useful for
+catching token-efficiency regressions across releases.
+
+Each retrieval result also carries a `_meta.confidence` (0–1) score and
+per-symbol `_freshness ∈ {fresh, edited_uncommitted, stale_index}`
+markers, so an agent can decide whether a token-cheap result is worth
+trusting or whether it needs to spend a re-index first.
+
+---

@@ -116,6 +116,29 @@ This evaluation is performed by jMunchWorkbench, which runs the same
 prompt in two modes (baseline vs. jcodemunch) and compares answers,
 tokens, and latency side-by-side.
 
+## Replayable Retrieval-Quality Benchmark (v1.76.0+)
+
+Token efficiency is one axis; **ranking quality** is the other. The
+`benchmarks/replay/` harness measures ranking quality with three
+information-retrieval metrics on a fixed query corpus:
+
+- **nDCG@k** — Normalized Discounted Cumulative Gain (binary relevance,
+  normalized by ideal DCG); rewards relevant results near the top.
+- **MRR@k** — Mean Reciprocal Rank of the first relevant item in top-k.
+- **Recall@k** — fraction of all relevant items present in top-k.
+
+Fixtures are JSON files at `benchmarks/replay/fixtures/*.json` with
+shape `{name, repo, repo_sha, queries: [{query, expected_top_k}]}`.
+The harness (`run_replay.py`) runs each query through `search_symbols`,
+computes per-query and aggregate metrics, and optionally writes
+`benchmarks/replay/results/{fixture}-v{VERSION}.json`.
+
+A regression gate (`--baseline X.Y.Z --gate 0.02`) fails the run if any
+aggregate metric drops by more than 2% vs the saved baseline. The
+shipped `self_v1_75_0` fixture is locked at 1.0 nDCG/MRR/Recall — every
+release in v1.76.0+ runs against it as a CI guard. See the
+`benchmarks/replay/` source for details.
+
 ## Common Misreadings
 
 **"The claim is up to 99%."**

@@ -693,7 +693,63 @@ Reports added, removed, or changed symbols by comparing two indexed snapshots us
 
 No input required.
 
-Returns per-session and all-time token savings statistics, per-tool breakdown, session duration, and cost-avoidance estimates across model price points.
+Returns per-session and all-time token savings statistics, per-tool breakdown, session duration, cost-avoidance estimates across model price points, and (v1.74.0+) `latency_per_tool` with `{count, p50_ms, p95_ms, max_ms, errors, error_rate}` for every tool exercised this session.
+
+---
+
+#### `analyze_perf` — Per-tool latency + cache telemetry (v1.74.0+)
+
+Inputs:
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `window` | `"session" \| "1h" \| "24h" \| "7d" \| "all"` | `"session"` | `"session"` reads the in-memory ring; the others read the persistent `~/.code-index/telemetry.db` SQLite sink (requires `perf_telemetry_enabled`). |
+| `top` | int | 20 | Cap on slowest-tool entries returned. |
+| `tool` | str | optional | Restrict the analysis to a single tool name. |
+| `compare_release` | str | optional | Diffs the current session against `benchmarks/token_baselines/v{X}.json` (saved by `capture_token_baseline.py`). Adds `baseline_diff` per-tool deltas in tokens_saved + latency. Missing baseline reported via `baseline_meta.found=false`. |
+| `ledger` | bool | `false` | Include `ranking_ledger` summary aggregating the v1.78.0 `ranking_events` table by repo (events, avg_confidence, identity_hits, semantic_used, stale_events) and by tool. |
+
+Returns the slowest tools by p95 alongside the coldest cache hit-rates.
+
+---
+
+#### `tune_weights` — Online retrieval-weight tuner (v1.79.0+)
+
+Inputs:
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `repo` | str | optional | Limit tuning to one repo. Default: every repo present in the ledger. |
+| `dry_run` | bool | `false` | Compute proposed deltas without writing `~/.code-index/tuning.jsonc`. |
+| `min_events` | int | 50 | Skip repos with fewer ledger events than this (defends against overfitting). |
+| `explain` | bool | `false` | Include per-signal correlations (mean confidence with/without semantic and identity channels) in the response. |
+
+Reads the persisted `ranking_events` ledger, splits events by signal
+(`semantic_used`, `identity_hit`), and proposes a `±0.05` step on the
+matching weight when the mean confidence delta between groups exceeds
+0.05. Bounded — `semantic_weight` clamps to `[0.1, 0.8]` and
+`identity_boost` to `[0.5, 2.0]`. `search_symbols` consults the resulting
+overrides at query time when the caller leaves `semantic_weight` at the
+default 0.5.
+
+---
+
+#### `check_embedding_drift` — Embedding canary (v1.80.0+)
+
+Inputs:
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `capture` | bool | `false` | Pin a fresh canary instead of running the drift check. No-op when one already exists unless `force=true`. |
+| `force` | bool | `false` | Re-pin the canary before checking (use after intentional provider/model upgrades). |
+| `threshold` | number | `0.05` | Cosine-distance ceiling above which the alarm fires (per-canary maximum, not mean). |
+
+Pins (or re-checks) a 16-string deterministic canary against the active
+embedding provider. Stores `~/.code-index/embed_canary.json` with the
+captured vectors, then on each subsequent call re-embeds and compares
+cosine similarity. Catches silent provider model changes (Gemini revs,
+OpenAI weight updates, bundled-ONNX swaps) that quietly degrade hybrid
+retrieval.
 
 ---
 
@@ -1077,6 +1133,8 @@ HTTP transports bind to `--host` / `--port` (defaults: `127.0.0.1:8901`) and sup
 | `JCODEMUNCH_MAX_INDEX_FILES`      | overrides the default file-count limit                               | No       |
 | `JCODEMUNCH_LOG_FILE`             | directs logging to file instead of stderr in stdio sessions          | No       |
 | `JCODEMUNCH_SHARE_SAVINGS`        | enables or disables community savings reporting                      | No       |
+| `JCODEMUNCH_PERF_TELEMETRY`       | set `1` to persist per-tool latency + ranking-event rows to `~/.code-index/telemetry.db`. In-memory ring is always tracked; this controls only durable persistence. | No |
+| `JCODEMUNCH_PERF_TELEMETRY_MAX_ROWS` | rolling cap on persisted perf rows (default 100000); oldest trimmed in 1k-row batches | No |
 | `JCODEMUNCH_PATH_MAP`             | remaps stored path prefixes at retrieval time; format: `orig1=new1,orig2=new2` — allows an index built on one machine (e.g. Linux `/home/user`) to be reused on another (e.g. Windows `C:\Users\user`) without re-indexing. Each pair is split on the **last** `=`, so `=` signs within path components are preserved. Pairs are comma-separated; path components containing commas are not supported. First matching prefix wins. | No       |
 | `JCODEMUNCH_REDACT_SOURCE_ROOT`   | redacts absolute path details from output                            | No       |
 | `JCODEMUNCH_TRANSPORT`            | transport mode: `stdio`, `sse`, or `streamable-http`                | No       |

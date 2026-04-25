@@ -292,6 +292,20 @@ claude mcp remove jcodemunch
 claude mcp add jcodemunch -e JCODEMUNCH_SHARE_SAVINGS=0 -- jcodemunch-mcp
 ```
 
+### Optional: Enable persistent perf telemetry (v1.74.0+)
+
+The performance and ranking telemetry introduced in v1.74.0 is **disabled
+by default** and **local-only** (no network traffic). To enable the
+persistent SQLite sink at `~/.code-index/telemetry.db`:
+
+```bash
+claude mcp add jcodemunch -e JCODEMUNCH_PERF_TELEMETRY=1 -- jcodemunch-mcp
+```
+
+Once enabled, `analyze_perf(window=...)`, `tune_weights`, and the
+ranking-ledger view become useful. The in-memory latency ring (queryable
+via `get_session_stats`) is always tracked regardless of this flag.
+
 ---
 
 ## Updating later

@@ -157,6 +157,26 @@ Authorization: Bearer <your-JCODEMUNCH_HTTP_TOKEN-value>
 
 ---
 
+## Retrieval feels slow
+
+**Symptom:** Tool calls take longer than expected.
+
+**Diagnose:** `analyze_perf { "window": "session" }` returns per-tool p50/p95/max latency from the in-memory ring (always tracked). For trend analysis across days, set `perf_telemetry_enabled: true` in `config.jsonc` and pass `window=1h|24h|7d|all`. The result includes `slowest_by_p95` and `cache.coldest_by_tool` to identify hot spots.
+
+---
+
+## Search confidence dropped without code changes
+
+**Symptom:** `_meta.confidence` on `search_symbols` is suddenly low; agents report they can't find familiar code.
+
+**Diagnose, in order:**
+1. **Index drift** — check `_meta.freshness.repo_is_stale` on a recent search. `true` means the index SHA differs from the live `git rev-parse HEAD`. Re-run `index_folder`.
+2. **Per-symbol staleness** — if individual results carry `_freshness: "edited_uncommitted"`, the file was edited since indexing. Either re-index or call `register_edit` on the changed paths.
+3. **Embedding drift** (semantic mode) — if you use Gemini/OpenAI/sentence-transformers, the provider may have shifted weights silently. Run `check_embedding_drift`. If `alarm: true`, run `embed_repo(force=true)` and `check_embedding_drift(force=true)` to re-pin the canary.
+4. **Tuned weights gone stale** — if `~/.code-index/tuning.jsonc` exists from a previous workload that no longer matches the codebase, delete the relevant repo entry or re-run `tune_weights`.
+
+---
+
 ## Index Integrity Check Failed
 
 **Symptom:** `load_index` returns None with a log warning about checksum mismatch.

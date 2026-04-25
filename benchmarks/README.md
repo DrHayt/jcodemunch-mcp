@@ -78,3 +78,18 @@ If you publish results against this corpus, open an issue or PR and we'll link t
 - The baseline is a lower bound. Agents that re-read files mid-task spend more.
 - The jcodemunch workflow counts `search_symbols` + `get_symbol_source` responses only — it does not count system prompt or tool description tokens, which are identical for both approaches.
 - Token counts are from serialized JSON responses, not raw source, so they include field names and structure overhead. This slightly understates the reduction.
+
+## Related harnesses (v1.74.0+)
+
+- **`benchmarks/replay/`** — replayable retrieval-quality benchmark.
+  Fixtures pin `(query, expected_top_k_ids)` tuples; the harness runs
+  each query through `search_symbols` and reports nDCG@k, MRR@k, and
+  Recall@k. CI gate: `run_replay.py --baseline X.Y.Z --gate 0.02` exits
+  non-zero if any aggregate metric drops by more than 2% vs the saved
+  baseline. The shipped `self_v1_75_0` fixture is locked at 1.0 across
+  all metrics — every release runs against it.
+- **`benchmarks/token_baselines/`** — per-release token-savings + latency
+  snapshots. `capture_token_baseline.py` reads
+  the live session's `get_session_stats` + `latency_stats` and writes
+  `benchmarks/token_baselines/v{VERSION}.json`. The `analyze_perf` tool
+  consumes these via `compare_release="X.Y.Z"`.

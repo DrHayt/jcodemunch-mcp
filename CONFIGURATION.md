@@ -215,6 +215,10 @@ The legacy `suppress_meta` per-call parameter still works for backward compatibi
 | `redact_source_root` | bool | `false` | Replace absolute source paths with display names in responses. |
 | `stats_file_interval` | int | `3` | Calls between `session_stats.json` writes. `0` = disable (reduces NVMe writes). |
 | `share_savings` | bool | `true` | Send anonymous token savings telemetry to the community counter. |
+| `perf_telemetry_enabled` | bool | `false` | Persist per-tool latency rows + the ranking ledger to `~/.code-index/telemetry.db`. The in-memory latency ring (queryable via `analyze_perf` and `get_session_stats`) is always tracked; this flag only controls durable persistence. |
+| `perf_telemetry_max_rows` | int | `100000` | Rolling cap on persisted perf rows; oldest rows trimmed in 1k-row batches once exceeded. |
+
+The perf telemetry sink (`telemetry.db`) is **local-only** — it never leaves the machine and contains no source code, only tool names, durations, query strings, and signal flags. Queryable via the `analyze_perf` tool. The ranking ledger (`ranking_events` table) feeds the `tune_weights` tool, which writes per-repo retrieval-weight overrides to `~/.code-index/tuning.jsonc`.
 
 ### Semantic search
 
@@ -286,6 +290,22 @@ Built-in default batting orders: Anthropic (`haiku` / `sonnet` / `opus`), OpenAI
 |-----|------|---------|-------------|
 | `strict_timeout_ms` | int | `500` | In `freshness_mode: "strict"`, max ms to wait for an in-progress reindex before serving. |
 
+Each retrieval result also carries a per-symbol `_freshness ∈ {fresh, edited_uncommitted, stale_index}` marker (v1.77.0+) and the response envelope includes a `_meta.freshness` summary. The freshness sub-signal feeds `_meta.confidence` (the 0–1 retrieval-quality score, v1.75.0+).
+
+### Retrieval tuning
+
+`tune_weights` (v1.79.0+) reads the persisted ranking ledger and writes
+per-repo `semantic_weight` / `identity_boost` overrides to
+`~/.code-index/tuning.jsonc`. `search_symbols` consults the file at query
+time when the caller leaves `semantic_weight` at the default; explicit
+non-default values always win. Disable by removing the file or by passing
+an explicit `semantic_weight` argument on each call.
+
+`check_embedding_drift` (v1.80.0+) pins a 16-string canary at
+`~/.code-index/embed_canary.json` and re-checks cosine drift on demand —
+catches silent provider model changes that would otherwise quietly
+degrade hybrid retrieval.
+
 ### Path remapping
 
 | Key | Type | Default | Description |
@@ -334,6 +354,8 @@ Every `JCODEMUNCH_*` env var maps to a config key:
 | `JCODEMUNCH_REDACT_SOURCE_ROOT` | `redact_source_root` |
 | `JCODEMUNCH_STATS_FILE_INTERVAL` | `stats_file_interval` |
 | `JCODEMUNCH_SHARE_SAVINGS` | `share_savings` |
+| `JCODEMUNCH_PERF_TELEMETRY` | `perf_telemetry_enabled` |
+| `JCODEMUNCH_PERF_TELEMETRY_MAX_ROWS` | `perf_telemetry_max_rows` |
 | `JCODEMUNCH_SUMMARIZER_CONCURRENCY` | `summarizer_concurrency` |
 | `JCODEMUNCH_ALLOW_REMOTE_SUMMARIZER` | `allow_remote_summarizer` |
 | `JCODEMUNCH_RATE_LIMIT` | `rate_limit` |

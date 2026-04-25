@@ -104,7 +104,14 @@ jcodemunch-mcp/
 │   │   └── fqn.py             # PHP FQN ↔ symbol_id translation (PSR-4)
 │   ├── storage/
 │   │   ├── index_store.py
-│   │   └── sqlite_store.py
+│   │   ├── sqlite_store.py
+│   │   └── token_tracker.py   # Token savings + per-tool latency rings + opt-in telemetry.db sink (v1.74.0+)
+│   ├── retrieval/
+│   │   ├── signal_fusion.py   # Weighted Reciprocal Rank fusion (lexical + structural + similarity + identity)
+│   │   ├── confidence.py      # 0-1 retrieval confidence score on every result envelope (v1.75.0+)
+│   │   ├── freshness.py       # Per-symbol _freshness ∈ {fresh, edited_uncommitted, stale_index} (v1.77.0+)
+│   │   ├── tuning.py          # Online weight tuner — learns per-repo semantic_weight + identity_boost from the ranking ledger (v1.79.0+)
+│   │   └── embed_drift.py     # 16-string canary + cosine drift detector (v1.80.0+)
 │   ├── summarizer/
 │   ├── tools/
 │   │   ├── _call_graph.py     # AST-derived call-graph helpers
@@ -112,6 +119,9 @@ jcodemunch-mcp/
 │   │   ├── session_state.py   # Session save/restore across restarts
 │   │   ├── turn_budget.py     # Cross-call token accumulator
 │   │   ├── plan_turn.py       # Opening-move router (BM25 + PageRank)
+│   │   ├── analyze_perf.py    # Per-tool latency + cache-hit telemetry; baseline diff + ranking-ledger view (v1.74.0+)
+│   │   ├── tune_weights.py    # MCP wrapper around retrieval/tuning.py (v1.79.0+)
+│   │   ├── check_embedding_drift.py # MCP wrapper around retrieval/embed_drift.py (v1.80.0+)
 │   │   └── ...
 │   └── ...
 ├── tests/
@@ -191,6 +201,39 @@ Indexes and raw-file caches live under `~/.code-index/` by default, optionally o
 The system relies on stable symbol IDs based on file path, qualified name, and kind, allowing later retrieval and cross-call workflows without fuzzy lookup.
 
 ### 5. Rich metadata envelopes
+
+Every retrieval response carries a `_meta` envelope that, in addition to
+token-savings telemetry and timing, exposes:
+
+- `_meta.confidence` (0-1) — calibrated retrieval-quality score from the
+  weighted geometric mean of top-1/top-2 score gap, top-1 strength,
+  identity-match presence, and freshness. Lets agents gate follow-up
+  calls on a single number.
+- `_meta.freshness` — `{fresh, edited_uncommitted, stale_index, repo_is_stale}`
+  summary. Each result entry also carries a per-symbol `_freshness` field
+  derived from index SHA vs `git rev-parse HEAD` and per-file mtime checks.
+- `_meta.latency_per_tool` (on `get_session_stats`) — p50/p95/max/error_rate
+  per tool in the current session, populated from a per-tool 512-entry
+  ring buffer maintained by `storage/token_tracker._State`.
+
+### 6. Telemetry, learning, and quality gates
+
+The retrieval stack carries a built-in telemetry surface, all of it
+local-only and additive (no behavior change in default-flag paths):
+
+- A per-tool latency ring is always populated by the `call_tool` dispatcher.
+- An opt-in SQLite sink (`~/.code-index/telemetry.db`, gated by
+  `perf_telemetry_enabled`) records `tool_calls` (latency rows) and
+  `ranking_events` (search-result feature rows for later regression).
+- The `tune_weights` tool reads `ranking_events`, learns per-repo
+  retrieval weights, and writes `~/.code-index/tuning.jsonc`.
+  `search_symbols` consults those overrides at query time when the caller
+  uses the default `semantic_weight`.
+- `benchmarks/replay/` contains golden retrieval-quality fixtures and a
+  CI-friendly regression gate using nDCG/MRR/Recall — every release runs
+  against the locked v1.75.0 fixture.
+- `check_embedding_drift` pins a 16-string canary at first use and
+  re-checks cosine drift on demand to catch silent provider model changes.
 
 Operations return metadata describing timing, repository identity, truncation, token-savings estimates, and related execution details. Recent versions also label savings as estimates and include the estimation method where applicable.
 

@@ -60,6 +60,13 @@ Always use jCodemunch-MCP tools for code navigation. Never fall back to Read, Gr
 - If `auto_compacted: true` appears: results were automatically compressed due to turn budget
 - Use `get_session_context` to check what you've already read — avoid re-reading the same files
 
+**Reading the response envelope (v1.74.0+):**
+- `_meta.confidence` (0–1) — calibrated retrieval-quality score on `search_symbols` / `plan_turn` / `get_ranked_context`. ≥ 0.8 → trust the top result; ≤ 0.4 → widen the search or report a gap
+- `_meta.freshness` — `{fresh, edited_uncommitted, stale_index}` counts plus `repo_is_stale` flag. Per-result `_freshness` field on each symbol entry
+- If `repo_is_stale=true`, suggest `index_folder` before claiming current behaviour
+- For latency / cache health: `analyze_perf` (in-memory by default; `window=1h|24h|7d|all` reads `~/.code-index/telemetry.db` when `perf_telemetry_enabled` is on)
+- After a representative workload on a new repo, run `tune_weights` to learn per-repo retrieval weights from the ranking ledger
+
 ## Model-Driven Tool Tiering
 
 Your jcodemunch-mcp server narrows the exposed tool list based on the model you are running as. To avoid wasting requests on primitives when a composite would do, always include `model="<your-model-id>"` in your opening `plan_turn` call.

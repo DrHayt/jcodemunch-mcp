@@ -31,3 +31,17 @@ pytest tests/ -q
 - Keep PRs focused; one feature or fix per PR
 - Include tests for new functionality
 - Run the full test suite before submitting
+
+## Quality gates that run on every release
+
+- **Schema budget** — `tests/test_schema_budget.py` fails when `tools/list` token count grows more than 5% above `benchmarks/schema_baseline.json`. If you intentionally grow the schema (new tool / longer description), regenerate the baseline in the same PR with justification:
+  ```bash
+  PYTHONPATH=src python benchmarks/harness/capture_schema_baseline.py
+  ```
+- **Retrieval-quality replay (v1.76.0+)** — `benchmarks/replay/run_replay.py` runs golden queries through `search_symbols` and reports nDCG@10 / MRR@10 / Recall@10 against the locked v1.75.0 baseline. Any aggregate metric drop > 2% fails the gate:
+  ```bash
+  PYTHONPATH=src python benchmarks/replay/run_replay.py \
+      --fixture benchmarks/replay/fixtures/self_v1_75_0.json \
+      --baseline 1.75.0 --gate 0.02
+  ```
+  If your change legitimately moves a metric, capture a new fixture/baseline and document the reason in the PR description.

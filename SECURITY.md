@@ -86,6 +86,29 @@ Binary files are excluded using a two-stage check:
 
 ---
 
+## Telemetry Data Locality
+
+The performance and ranking telemetry introduced in v1.74.0–v1.80.0 is
+**local-only** and **opt-in**:
+
+* `~/.code-index/telemetry.db` (`tool_calls`, `ranking_events`) is written
+  only when `perf_telemetry_enabled: true` (or `JCODEMUNCH_PERF_TELEMETRY=1`).
+  Default is **disabled** — the in-memory latency ring is always tracked
+  but no row touches disk.
+* `~/.code-index/tuning.jsonc` (per-repo retrieval-weight overrides) is
+  written only by an explicit `tune_weights` invocation.
+* `~/.code-index/embed_canary.json` (16-string drift canary) is written
+  only by an explicit `check_embedding_drift(capture=true)` invocation.
+* No telemetry is sent over the network. The community token-savings
+  counter (`share_savings`) is unrelated and only sends an integer
+  delta plus an anonymous UUID — never query strings, paths, or repo
+  names. Disable with `JCODEMUNCH_SHARE_SAVINGS=0`.
+* Stored ranking events include the **literal query string** (truncated
+  result-id list, no source code). Treat the storage path with the same
+  care as any local source you index.
+
+---
+
 ## Summary of Controls
 
 | Control                   | Location                       | Default                     |
@@ -98,3 +121,7 @@ Binary files are excluded using a two-stage check:
 | File count limit          | File discovery pipeline        | 500 files                   |
 | `.gitignore` respect      | Indexing pipeline              | Enabled                     |
 | UTF-8 safe decode         | All file reads                 | `errors="replace"`          |
+| Perf telemetry sink       | `perf_telemetry_enabled`       | **Disabled** (opt-in)       |
+| Ranking ledger storage    | `perf_telemetry_enabled`       | **Disabled** (opt-in)       |
+| Tuning overrides          | Explicit `tune_weights` call   | None until invoked          |
+| Embedding canary          | Explicit `check_embedding_drift` call | None until invoked   |

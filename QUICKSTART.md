@@ -209,8 +209,12 @@ The agent will call `get_session_stats`, which returns:
 | `session_cost_avoided` | Estimated cost avoided this session, broken down by model |
 | `total_cost_avoided` | Lifetime cost avoided, broken down by model |
 | `tool_breakdown` | Per-tool token savings for the current session |
+| `latency_per_tool` | p50/p95/max/error_rate per tool exercised this session (v1.74.0+) |
+| `result_cache` | Hit-rate stats for the session result cache |
 
 Lifetime stats persist to `~/.code-index/session_stats.json`. If this file exists, jCodeMunch is working and saving you tokens. If the numbers are zero, the agent is likely still using built-in file tools — revisit Step 3 above.
+
+Want a slowest-tools / coldest-caches view? Ask: *"Run analyze_perf"* — the agent will call the `analyze_perf` tool and report which tools are slow and which caches are cold.
 
 ---
 
