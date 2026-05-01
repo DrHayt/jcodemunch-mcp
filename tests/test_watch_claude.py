@@ -226,6 +226,36 @@ class TestHookEvent:
         entry = json.loads(manifest.read_text().strip())
         assert entry["path"] == str(Path("/tmp/legacy-wt").resolve())
 
+    def test_remove_with_worktree_path_runs_git(self, tmp_path):
+        """Remove with worktree_path must still run git worktree remove."""
+        manifest = tmp_path / "manifest.jsonl"
+        payload = json.dumps({
+            "cwd": str(tmp_path),
+            "worktree_path": "/tmp/my-worktree",
+        })
+        mock_run = MagicMock(return_value=subprocess.CompletedProcess(
+            args=[], returncode=0, stdout="", stderr="",
+        ))
+        with (
+            patch("sys.stdin", StringIO(payload)),
+            patch("jcodemunch_mcp.hook_event.subprocess.run", mock_run),
+        ):
+            handle_hook_event("remove", manifest_path=manifest)
+
+        assert mock_run.call_count == 2
+        # First call: git worktree remove
+        wt_args = mock_run.call_args_list[0][0][0]
+        assert "worktree" in wt_args
+        assert "remove" in wt_args
+        # Second call: git branch -D (name derived from path)
+        br_args = mock_run.call_args_list[1][0][0]
+        assert "branch" in br_args
+        assert "-D" in br_args
+        assert "worktree-my-worktree" in br_args
+        # Manifest records the remove
+        entry = json.loads(manifest.read_text().strip())
+        assert entry["event"] == "remove"
+
     def test_creates_manifest_if_missing(self, tmp_path):
         manifest = tmp_path / "subdir" / "manifest.jsonl"
         payload = json.dumps({

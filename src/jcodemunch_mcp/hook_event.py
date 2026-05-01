@@ -67,8 +67,10 @@ def handle_hook_event(event_type: str, manifest_path: Path | None = None) -> Non
     For 'remove': determines path, runs ``git worktree remove``, records
     to manifest.
 
-    When ``worktreePath`` is provided directly (legacy), the caller already
-    owns the worktree — only manifest recording is performed, no git commands.
+    When ``worktreePath`` is provided directly for a 'create' event, the
+    caller already owns the worktree — only manifest recording is performed.
+    For 'remove', the worktree is still torn down even when the path is
+    provided directly.
 
     Called by Claude Code hooks via:
         jcodemunch-mcp hook-event create
@@ -90,23 +92,30 @@ def handle_hook_event(event_type: str, manifest_path: Path | None = None) -> Non
     cwd = payload.get("cwd", "")
     name = payload.get("name", "")
 
-    # Legacy support: accept worktreePath / worktree_path directly.
-    # When provided, the caller already owns the worktree — skip git commands.
+    # Accept worktreePath / worktree_path directly (Claude Code sends this
+    # for WorktreeRemove).  For 'create' the caller already owns the
+    # worktree — just record the manifest.  For 'remove' we still need to
+    # tear down the worktree and branch.
     legacy_path = payload.get("worktreePath") or payload.get("worktree_path")
 
-    if legacy_path:
+    if legacy_path and event_type == "create":
         resolved = str(Path(legacy_path).resolve())
         _append_manifest(event_type, resolved, manifest_path)
         print(resolved, flush=True)
         return
 
-    # Modern path: Claude Code sends {cwd, name}.
-    if not cwd or not name:
+    if legacy_path:
+        # 'remove' with an explicit path — use it directly.
+        resolved = str(Path(legacy_path).resolve())
+        # Derive name from the last path component for branch cleanup.
+        if not name:
+            name = Path(resolved).name
+    elif cwd and name:
+        worktree_path = _resolve_worktree_path(cwd, name)
+        resolved = str(Path(worktree_path).resolve())
+    else:
         print("ERROR: need cwd+name or worktreePath in stdin payload", file=sys.stderr)
         sys.exit(1)
-
-    worktree_path = _resolve_worktree_path(cwd, name)
-    resolved = str(Path(worktree_path).resolve())
 
     if event_type == "create":
         Path(resolved).parent.mkdir(parents=True, exist_ok=True)
