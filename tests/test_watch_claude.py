@@ -154,6 +154,7 @@ class TestHookEvent:
             patch("sys.stdin", StringIO(payload)),
             patch("jcodemunch_mcp.hook_event.subprocess.run", mock_run),
             patch("jcodemunch_mcp.hook_event._get_worktree_base", return_value=""),
+            patch("jcodemunch_mcp.hook_event._resolve_main_repo", return_value=str(tmp_path)),
         ):
             handle_hook_event("remove", manifest_path=manifest)
 
@@ -183,6 +184,7 @@ class TestHookEvent:
             patch("sys.stdin", StringIO(payload)),
             patch("jcodemunch_mcp.hook_event.subprocess.run", return_value=fail_result),
             patch("jcodemunch_mcp.hook_event._get_worktree_base", return_value=""),
+            patch("jcodemunch_mcp.hook_event._resolve_main_repo", return_value=str(tmp_path)),
         ):
             # Should not raise
             handle_hook_event("remove", manifest_path=manifest)
@@ -226,6 +228,31 @@ class TestHookEvent:
         entry = json.loads(manifest.read_text().strip())
         assert entry["path"] == str(Path("/tmp/legacy-wt").resolve())
 
+    def test_remove_resolves_main_repo(self, tmp_path):
+        """Remove should run git commands from the main repo, not the worktree."""
+        manifest = tmp_path / "manifest.jsonl"
+        wt_path = tmp_path / ".claude" / "worktrees" / "my-wt"
+        main_repo = tmp_path / "main-repo"
+        payload = json.dumps({
+            "cwd": str(wt_path),  # cwd is the worktree itself
+            "name": "my-wt",
+            "hook_event_name": "WorktreeRemove",
+        })
+        mock_run = MagicMock(return_value=subprocess.CompletedProcess(
+            args=[], returncode=0, stdout="", stderr="",
+        ))
+        with (
+            patch("sys.stdin", StringIO(payload)),
+            patch("jcodemunch_mcp.hook_event.subprocess.run", mock_run),
+            patch("jcodemunch_mcp.hook_event._get_worktree_base", return_value=""),
+            patch("jcodemunch_mcp.hook_event._resolve_main_repo", return_value=str(main_repo)),
+        ):
+            handle_hook_event("remove", manifest_path=manifest)
+
+        # git -C should use main_repo, not the worktree path
+        wt_args = mock_run.call_args_list[0][0][0]
+        assert wt_args[2] == str(main_repo)
+
     def test_remove_with_worktree_path_runs_git(self, tmp_path):
         """Remove with worktree_path must still run git worktree remove."""
         manifest = tmp_path / "manifest.jsonl"
@@ -239,6 +266,7 @@ class TestHookEvent:
         with (
             patch("sys.stdin", StringIO(payload)),
             patch("jcodemunch_mcp.hook_event.subprocess.run", mock_run),
+            patch("jcodemunch_mcp.hook_event._resolve_main_repo", return_value=str(tmp_path)),
         ):
             handle_hook_event("remove", manifest_path=manifest)
 

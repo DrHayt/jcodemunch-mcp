@@ -45,6 +45,26 @@ def _resolve_worktree_path(cwd: str, name: str) -> str:
     return str(Path(cwd) / ".claude" / "worktrees" / name)
 
 
+def _resolve_main_repo(cwd: str) -> str:
+    """Return the main repo root, even when *cwd* is inside a worktree.
+
+    Uses ``git rev-parse --git-common-dir`` to find the shared ``.git``
+    directory, then takes its parent.  Falls back to *cwd* on any error.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "-C", cwd, "rev-parse", "--path-format=absolute",
+             "--git-common-dir"],
+            capture_output=True, text=True,
+        )
+        if result.returncode == 0:
+            git_common = result.stdout.strip()
+            return str(Path(git_common).parent)
+    except Exception:
+        pass
+    return cwd
+
+
 def _append_manifest(event_type: str, resolved: str, manifest_path: Path) -> None:
     """Append a single event line to the JSONL manifest."""
     entry = {
@@ -130,8 +150,11 @@ def handle_hook_event(event_type: str, manifest_path: Path | None = None) -> Non
             sys.exit(1)
 
     elif event_type == "remove":
+        # cwd may be the worktree itself — resolve to the main repo so
+        # git worktree remove doesn't run from inside the tree it's deleting.
+        repo_root = _resolve_main_repo(cwd) if cwd else _resolve_main_repo(resolved)
         result = subprocess.run(
-            ["git", "-C", cwd, "worktree", "remove", resolved, "--force"],
+            ["git", "-C", repo_root, "worktree", "remove", resolved, "--force"],
             capture_output=True,
             text=True,
         )
@@ -142,7 +165,7 @@ def handle_hook_event(event_type: str, manifest_path: Path | None = None) -> Non
         # Clean up the branch created during worktree add.
         branch_name = f"worktree-{name}"
         subprocess.run(
-            ["git", "-C", cwd, "branch", "-D", branch_name],
+            ["git", "-C", repo_root, "branch", "-D", branch_name],
             capture_output=True,
             text=True,
         )
