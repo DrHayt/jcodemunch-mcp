@@ -109,6 +109,13 @@ def handle_hook_event(event_type: str, manifest_path: Path | None = None) -> Non
         print(f"ERROR: failed to read stdin: {exc}", file=sys.stderr)
         sys.exit(1)
 
+    # Temporary debug log — remove before shipping.
+    _dbg = Path(os.environ.get("CODE_INDEX_PATH", str(Path.home() / ".code-index"))) / "hook-event-debug.log"
+    def _log(msg: str) -> None:
+        with open(_dbg, "a") as _f:
+            _f.write(f"{datetime.now(timezone.utc).isoformat()} {msg}\n")
+    _log(f"event_type={event_type} payload={json.dumps(payload, default=str)}")
+
     cwd = payload.get("cwd", "")
     name = payload.get("name", "")
 
@@ -153,11 +160,15 @@ def handle_hook_event(event_type: str, manifest_path: Path | None = None) -> Non
         # cwd may be the worktree itself — resolve to the main repo so
         # git worktree remove doesn't run from inside the tree it's deleting.
         repo_root = _resolve_main_repo(cwd) if cwd else _resolve_main_repo(resolved)
+        _log(f"remove: resolved={resolved} cwd={cwd} repo_root={repo_root} name={name}")
+        cmd = ["git", "-C", repo_root, "worktree", "remove", resolved, "--force"]
+        _log(f"remove cmd: {cmd}")
         result = subprocess.run(
-            ["git", "-C", repo_root, "worktree", "remove", resolved, "--force"],
+            cmd,
             capture_output=True,
             text=True,
         )
+        _log(f"remove result: rc={result.returncode} stdout={result.stdout!r} stderr={result.stderr!r}")
         # Non-fatal: worktree may already be gone.
         if result.returncode != 0:
             print(f"WARNING: git worktree remove failed: {result.stderr.strip()}", file=sys.stderr)
