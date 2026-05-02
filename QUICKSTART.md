@@ -126,9 +126,16 @@ openclaw mcp list
 }
 ```
 
-#### Other clients (Cursor, Windsurf, Roo, etc.)
+#### Other clients
 
-Any MCP-compatible client accepts the same JSON block above in its MCP config file.
+Works with **Cursor, Windsurf, Codex CLI, Continue, Cline, Roo Code, Zed, Goose, Hermes Agent, Paperclip** — and any other MCP-compatible client. Most accept the same JSON block above in their MCP config file. Codex CLI uses TOML instead:
+
+```toml
+# ~/.codex/config.toml
+[mcp_servers.jcodemunch]
+command = "uvx"
+args = ["jcodemunch-mcp"]
+```
 
 ### Step 3 — Tell your agent to use it
 

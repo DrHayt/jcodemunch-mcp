@@ -699,14 +699,34 @@ Then index a repo, ask your agent what it has indexed, and have it retrieve code
 
 ## Works with
 
-jCodeMunch plugs into any MCP-compatible agent or IDE. Tested configurations:
+jCodeMunch is an MCP server — it plugs into **every major agent and IDE that speaks MCP**:
+
+**Claude Code · Claude Desktop · Cursor · Windsurf · Codex CLI · Continue · Cline · Roo Code · Zed · Goose · Hermes Agent · Paperclip** — and more.
+
+Tested configurations:
 
 | Platform | Config |
 |----------|--------|
 | **Claude Code / Claude Desktop** | `jcodemunch-mcp init` (auto-detects and patches config) |
-| **Cursor / Windsurf** | `jcodemunch-mcp init` or manual `mcp.json` |
+| **Cursor / Windsurf / Continue** | `jcodemunch-mcp init` or manual `mcp.json` |
+| **OpenAI Codex CLI** | Add `[mcp_servers.jcodemunch]` block to `~/.codex/config.toml` (see below) |
+| **Cline / Roo Code** | Add via the MCP marketplace UI or paste `command: uvx`, `args: ["jcodemunch-mcp"]` |
+| **Zed** | Add to `settings.json` under `context_servers` |
+| **Goose (Block)** | `goose configure` → Add Extension → command `uvx jcodemunch-mcp` |
 | **[Hermes Agent](https://github.com/NousResearch/hermes-agent)** | Add to `~/.hermes/config.yaml` — see [skill](https://github.com/NousResearch/hermes-agent/pull/10413) |
-| **Any MCP client** | stdio: `jcodemunch-mcp`, HTTP: `jcodemunch-mcp serve --transport sse` |
+| **Paperclip** | `.mcp.json` at workspace root (auto-detected) |
+| **Any other MCP client** | stdio: `jcodemunch-mcp`, HTTP: `jcodemunch-mcp serve --transport sse` |
+
+<details>
+<summary>Codex CLI config</summary>
+
+```toml
+# ~/.codex/config.toml
+[mcp_servers.jcodemunch]
+command = "uvx"
+args = ["jcodemunch-mcp"]
+```
+</details>
 
 <details>
 <summary>Hermes Agent config</summary>

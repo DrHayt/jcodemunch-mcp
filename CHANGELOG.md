@@ -2,6 +2,21 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.80.4] — 2026-05-02 — Expanded client coverage in docs
+
+### Changed
+- **README "Works with" section** now explicitly names every major MCP-compatible
+  client jCodeMunch supports: Claude Code, Claude Desktop, Cursor, Windsurf,
+  Codex CLI, Continue, Cline, Roo Code, Zed, Goose, Hermes Agent, Paperclip — and
+  any other MCP client. Previously the table only listed four rows and buried the
+  rest under "Any MCP client."
+- **Added Codex CLI config snippet** (`~/.codex/config.toml` `[mcp_servers.jcodemunch]`
+  block) to both README and QUICKSTART. Recurring community question.
+- **QUICKSTART step 2 "Other clients"** section names the same full client list
+  instead of the previous "Cursor, Windsurf, Roo, etc."
+
+No code changes — docs only.
+
 ## [1.80.3] — 2026-04-30 — WorktreeRemove hook fix (PR #270)
 
 ### Fixed
