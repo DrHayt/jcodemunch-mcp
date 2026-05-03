@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import fnmatch
+import json
 import re
 import time
 from typing import Optional
@@ -67,6 +68,67 @@ def _matches_any_pattern(file_path: str, patterns: list[str]) -> bool:
         if fnmatch.fnmatch(fp_fwd, pat) or fnmatch.fnmatch(fp_fwd.rsplit("/", 1)[-1], pat):
             return True
     return False
+
+
+def _package_json_entries(index, store, owner: str, repo_name: str) -> set[str]:
+    """Return source files referenced by any ``package.json``'s ``main`` /
+    ``module`` / ``exports`` / ``bin`` field. JS-library equivalent of the
+    Python ``app.py``/``main.py`` filename heuristic. (Backported from
+    get_dead_code_v2 in v1.80.8 — sverklo bench parity.)
+    """
+    entries: set[str] = set()
+    source_files = frozenset(index.source_files)
+    for f in index.source_files:
+        fn = f.replace("\\", "/").rsplit("/", 1)[-1]
+        if fn != "package.json":
+            continue
+        content = store.get_file_content(owner, repo_name, f)
+        if not content:
+            continue
+        try:
+            pkg = json.loads(content)
+        except (ValueError, TypeError):
+            continue
+        if not isinstance(pkg, dict):
+            continue
+        candidates: list[str] = []
+        for key in ("main", "module", "browser"):
+            v = pkg.get(key)
+            if isinstance(v, str):
+                candidates.append(v)
+        exports = pkg.get("exports")
+        if isinstance(exports, str):
+            candidates.append(exports)
+        elif isinstance(exports, dict):
+            def _walk_exports(node):
+                if isinstance(node, str):
+                    candidates.append(node)
+                elif isinstance(node, dict):
+                    for v in node.values():
+                        _walk_exports(v)
+            _walk_exports(exports)
+        bins = pkg.get("bin")
+        if isinstance(bins, str):
+            candidates.append(bins)
+        elif isinstance(bins, dict):
+            candidates.extend(v for v in bins.values() if isinstance(v, str))
+
+        pkg_dir = f.replace("\\", "/").rsplit("/", 1)[0] if "/" in f else ""
+        for cand in candidates:
+            cand = cand.lstrip("./").replace("\\", "/")
+            joined = f"{pkg_dir}/{cand}" if pkg_dir else cand
+            joined = joined.lstrip("/")
+            if joined in source_files:
+                entries.add(joined)
+                continue
+            for ext in ("", ".js", ".ts", ".mjs", ".cjs", ".jsx", ".tsx",
+                        "/index.js", "/index.ts", "/index.mjs",
+                        "/index.cjs"):
+                trial = joined + ext
+                if trial in source_files:
+                    entries.add(trial)
+                    break
+    return entries
 
 
 def _has_entry_point_decorator(sym: dict) -> bool:
@@ -137,7 +199,8 @@ def find_dead_code(
     rev = _build_reverse_adjacency(index.imports, source_files, index.alias_map, getattr(index, "psr4_map", None))
 
     # -----------------------------------------------------------------------
-    # Phase 1: identify live roots by filename pattern (no I/O)
+    # Phase 1: identify live roots by filename pattern + package.json (no I/O
+    # for the filename pass; package.json parsing is bounded by # of manifests).
     # -----------------------------------------------------------------------
     live_roots: set[str] = set()
     for f in index.source_files:
@@ -149,6 +212,12 @@ def find_dead_code(
             live_roots.add(f)
         elif entry_point_patterns and _matches_any_pattern(f, entry_point_patterns):
             live_roots.add(f)
+    # JS-library entry points: whatever package.json declares as main/module/
+    # exports/bin. Without this, library files like Express's lib/express.js
+    # had only `index.js` as importer, that index had no further importers,
+    # so the file was misclassified as `all_importers_dead` at confidence 0.7.
+    pkg_entries = _package_json_entries(index, store, owner, name)
+    live_roots.update(pkg_entries)
 
     # -----------------------------------------------------------------------
     # Phase 2: content check for `if __name__ == "__main__"` (Python only,

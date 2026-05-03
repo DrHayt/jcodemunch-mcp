@@ -2,6 +2,27 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.80.8] — 2026-05-03 — find_dead_code v1: package.json entry-point parity
+
+### Fixed
+- **`find_dead_code` (v1) had the same JS-library false-positive as
+  `get_dead_code_v2` (fixed in 1.80.7).** A library file like
+  `lib/express.js` had only `index.js` as importer; that index had no
+  further importers; v1 misclassified the file as `all_importers_dead`
+  at confidence 0.7. Now seeds live roots with files declared by any
+  `package.json`'s `main`/`module`/`exports`/`bin` field. Same
+  `_package_json_entries` logic as v2.
+
+### Tests
+- New `TestPackageJsonEntryPoints::test_main_field_seeds_live_roots`.
+- Suite: 3715 passing (+1).
+
+### Process
+- Added `todo.md` with explicit decisions/follow-ups from the sverklo
+  bench round (P2 design, ESM `export ... from` parser support, v1
+  deprecation question, smart-grep parity strategic question, and a
+  recently-shipped log).
+
 ## [1.80.7] — 2026-05-03 — get_dead_code_v2: JS library false-positive fix + pagination
 
 ### Fixed

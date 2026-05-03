@@ -188,3 +188,28 @@ class TestErrors:
         for key in ("dead_symbols", "dead_files", "dead_file_count",
                     "dead_symbol_count", "live_root_count", "analysis_notes", "_meta"):
             assert key in result, f"Missing key: {key}"
+
+
+# ---------------------------------------------------------------------------
+# v1.80.8: package.json entry-point detection — parity with get_dead_code_v2
+# ---------------------------------------------------------------------------
+
+class TestPackageJsonEntryPoints:
+    def test_main_field_seeds_live_roots(self, tmp_path):
+        """A JS library file referenced by `package.json` `main` should be
+        treated as a live root, not a dead file."""
+        repo, storage = _make_repo(tmp_path, {
+            "package.json": '{"name":"pkg","main":"./lib/express.js"}',
+            "index.js": "module.exports = require('./lib/express');",
+            "lib/express.js": (
+                "function createApplication() { return {}; }\n"
+                "module.exports = createApplication;\n"
+            ),
+        })
+        result = find_dead_code(repo, granularity="file",
+                                min_confidence=0.7, storage_path=storage)
+        dead_paths = {d["file"] for d in result.get("dead_files", [])}
+        assert "lib/express.js" not in dead_paths, (
+            f"lib/express.js is a package.json `main` and must not be "
+            f"flagged. Got dead files: {sorted(dead_paths)}"
+        )
