@@ -2,6 +2,64 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.80.7] — 2026-05-03 — get_dead_code_v2: JS library false-positive fix + pagination
+
+### Fixed
+- **`get_dead_code_v2` flagged genuine library exports as dead on JS
+  packages that use CommonJS / ES re-export patterns.** Surfaced by
+  the [sverklo retrieval benchmark](https://github.com/sverklo/sverklo/issues/25),
+  which scored us 0.00 on Express's P5 dead-code task because
+  `createApplication` (Express's main export) was reported as dead.
+  Three independent issues compounded:
+  - **Reachability BFS walked the import graph backwards.** From an
+    entry point it followed reverse adjacency (importers of the entry),
+    not forward (what the entry imports). Library files imported by the
+    entry were therefore wrongly treated as unreachable. New
+    `_build_forward_adjacency` helper + bidirectional BFS in
+    `_reachable_from_entry_points`.
+  - **No JavaScript-library entry-point detection.** The filename list
+    was Python-flavored (`app.py`, `main.py`, etc.); a JS package's
+    entry is whatever `package.json` declares as `main`/`module`/
+    `exports`/`bin`. New `_package_json_entries` helper parses package
+    manifests (string and conditional/subpath `exports` shapes) and
+    seeds the reachability set with whatever they reference.
+  - **Barrel re-export scanning didn't follow re-export chains.** A
+    barrel doing `module.exports = require('./X')` doesn't textually
+    mention X's exported names, so the barrel-export signal fired for
+    every X-defined symbol. `_barrel_exports` now recursively follows
+    CJS `module.exports = require('./Y')`, ESM `export * from './Y'`,
+    and ESM `export { foo } from './Y'` (depth-bounded to 4).
+
+### Added
+- `get_dead_code_v2(max_results=100, file_pattern=None)` —
+  `max_results` caps the response (pre-1.80.7 was unbounded; on a
+  large repo the response could exceed 8k tokens per call). Pass `0`
+  for unlimited. `file_pattern` scopes analysis to a glob like
+  `src/**`. `_meta.truncated` + `_meta.total_matches` flag when capped.
+- `_meta.package_json_entries` lists detected JS-library entry points.
+
+### Changed
+- **`find_references` tool description clarifies its scope.** It tracks
+  imports + dbt `{{ ref() }}` edges + (with `include_call_chain=true`)
+  symbols whose bodies textually mention the identifier. It does NOT
+  exhaustively enumerate every call site — for that, combine with
+  `search_text` or `get_call_hierarchy`. (sverklo bench scored both
+  jcodemunch and gitnexus ~0.00 on P2 reference-finding; the gap is
+  partly real and partly a docs problem.)
+
+### Tests
+- 9 new regression tests in `tests/test_v1_80_7_dead_code_js_reexports.py`:
+  Express-like CJS repro, regex coverage for CJS / ESM `export *` /
+  ESM named re-export patterns, `max_results` truncation, `max_results=0`
+  unlimited mode, `file_pattern` scope filtering.
+- Suite: **3714 passing** (+9 from 3705), 7 skipped.
+
+### Credit
+Thanks to [@nike-17](https://github.com/sverklo/sverklo/issues/25) for
+running a fair head-to-head benchmark, identifying the upstream issue
+with a clear reproducer, and explicitly calling out our P1 (symbol
+definition) win at 0.65 — the highest in the matrix.
+
 ## [1.80.6] — 2026-05-03 — config --check accepts the documented one-line form
 
 ### Fixed

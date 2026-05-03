@@ -1101,7 +1101,7 @@ def _build_tools_list() -> list[Tool]:
         ),
         Tool(
             name="find_references",
-            description="Find all files that import or reference an identifier. Answers 'where is this used?'. Supports dbt {{ ref() }} edges. Use identifiers for batch queries. Set include_call_chain=true to also see which symbols in each file call the identifier.",
+            description="Find all files that import or reference an identifier via the import graph. Answers 'where is this imported / re-exported?'. SCOPE: import sites + dbt `{{ ref() }}` edges + (when `include_call_chain=true`) symbols whose bodies textually mention the identifier. Does NOT exhaustively enumerate every call site across the codebase — for that, combine with search_text or use get_call_hierarchy on the resolved symbol_id. Use `identifiers` for batch queries.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -1889,12 +1889,16 @@ def _build_tools_list() -> list[Tool]:
             name="get_dead_code_v2",
             description=(
                 "Find likely-dead functions and methods using three independent evidence signals: "
-                "(1) the symbol's file is not reachable from any entry point via the import graph, "
+                "(1) the symbol's file is not reachable from any entry point via the import graph "
+                "(filename heuristic + package.json main/module/exports/bin), "
                 "(2) no indexed symbol calls this symbol in the call graph, "
-                "(3) the symbol name is not re-exported from any __init__ or barrel file. "
+                "(3) the symbol name is not re-exported from any __init__ or barrel file "
+                "(recursively follows CJS `module.exports = require(...)` and ES `export * from`). "
                 "Each result includes a confidence score (0.33 = 1 signal, 0.67 = 2 signals, 1.0 = all 3). "
                 "More reliable than single-signal dead-code detection. "
-                "Use min_confidence=0.67 for high-confidence results only."
+                "Use min_confidence=0.67 for high-confidence results only. "
+                "v1.80.7+ — `max_results` (default 100) caps response size; "
+                "`file_pattern` scopes analysis to a glob like `src/**`."
             ),
             inputSchema={
                 "type": "object",
@@ -1912,6 +1916,16 @@ def _build_tools_list() -> list[Tool]:
                         "type": "boolean",
                         "description": "Include test files in analysis (default false).",
                         "default": False,
+                    },
+                    "max_results": {
+                        "type": "integer",
+                        "description": "Cap on returned dead symbols (default 100, 0 = unlimited). _meta.truncated + _meta.total_matches flag when capped.",
+                        "default": 100,
+                        "minimum": 0,
+                    },
+                    "file_pattern": {
+                        "type": "string",
+                        "description": "Optional glob (e.g. `src/**`, `*.py`) — only analyse symbols whose file matches.",
                     },
                 },
                 "required": ["repo"],
@@ -3517,6 +3531,8 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                     repo=arguments["repo"],
                     min_confidence=arguments.get("min_confidence", 0.5),
                     include_tests=arguments.get("include_tests", False),
+                    max_results=arguments.get("max_results", 100),
+                    file_pattern=arguments.get("file_pattern"),
                     storage_path=storage_path,
                 )
             )

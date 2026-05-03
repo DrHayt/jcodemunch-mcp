@@ -13,6 +13,7 @@ constants are excluded to reduce noise).
 
 from __future__ import annotations
 
+import json
 import re
 import time
 from collections import deque
@@ -37,8 +38,22 @@ _ENTRY_POINT_FILENAMES = frozenset({
 
 _BARREL_FILENAMES = frozenset({
     "__init__.py", "index.ts", "index.js", "index.tsx", "index.jsx",
+    "index.mjs", "index.cjs",
     "mod.rs",
 })
+
+# CJS re-export: `module.exports = require('./X')` / `exports.foo = require('./X')`
+_CJS_REEXPORT_RE = re.compile(
+    r"""(?:module\.)?exports?(?:\.\w+)?\s*=\s*require\(\s*['"]([^'"]+)['"]\s*\)"""
+)
+# ES re-export-all: `export * from './X'` / `export * as ns from './X'`
+_ESM_REEXPORT_STAR_RE = re.compile(
+    r"""export\s+\*(?:\s+as\s+\w+)?\s+from\s+['"]([^'"]+)['"]"""
+)
+# ES named re-export: `export { foo, bar } from './X'`
+_ESM_REEXPORT_NAMED_RE = re.compile(
+    r"""export\s*\{[^}]+\}\s*from\s+['"]([^'"]+)['"]"""
+)
 
 
 def _filename(path: str) -> str:
@@ -63,19 +78,58 @@ def _build_reverse_adjacency(imports: dict, source_files: frozenset, alias_map: 
     return {k: list(dict.fromkeys(v)) for k, v in rev.items()}
 
 
+def _build_forward_adjacency(imports: dict, source_files: frozenset, alias_map: dict, psr4_map: Optional[dict] = None) -> dict[str, list[str]]:
+    """Forward adjacency: ``forward[src_file] = [imported targets]``.
+
+    Required so reachability BFS from entry points actually traverses the
+    dependency graph (the pre-1.80.7 reverse-only walk only found importers
+    of the entry, not files imported by it — which is why every library
+    file was treated as unreachable).
+    """
+    fwd: dict[str, list[str]] = {}
+    for src_file, file_imports in imports.items():
+        for imp in file_imports:
+            target = resolve_specifier(imp["specifier"], src_file, source_files, alias_map, psr4_map)
+            if target and target != src_file and target in source_files:
+                fwd.setdefault(src_file, []).append(target)
+    return {k: list(dict.fromkeys(v)) for k, v in fwd.items()}
+
+
 def _reachable_from_entry_points(
     source_files: list[str],
     rev: dict[str, list[str]],
+    forward: dict[str, list[str]],
+    extra_entries: Optional[set[str]] = None,
 ) -> set[str]:
-    """BFS from entry-point files; return the set of all reachable files."""
+    """Files reachable from entry points via the import graph.
+
+    Walks both directions to maximise the live set:
+      * **Forward**: from each entry, visit everything it imports
+        (the standard "what does the entry depend on?" semantic). Pre-1.80.7
+        only walked reverse, so library files imported by the entry were
+        wrongly treated as unreachable.
+      * **Reverse**: also pull in any file that imports the entry (e.g. a
+        test that imports ``app.py``). Preserves prior behavior.
+
+    ``extra_entries`` supplements the filename heuristic (e.g. files
+    declared by ``package.json`` ``main``).
+    """
     live: set[str] = set()
     queue: deque[str] = deque()
     for f in source_files:
-        if _is_entry_point(f):
+        if _is_entry_point(f) or (extra_entries and f in extra_entries):
+            live.add(f)
+            queue.append(f)
+    for f in (extra_entries or ()):
+        if f not in live:
             live.add(f)
             queue.append(f)
     while queue:
         node = queue.popleft()
+        for imported in forward.get(node, []):
+            if imported not in live:
+                live.add(imported)
+                queue.append(imported)
         for importer in rev.get(node, []):
             if importer not in live:
                 live.add(importer)
@@ -83,18 +137,125 @@ def _reachable_from_entry_points(
     return live
 
 
-def _barrel_exports(index, store, owner, repo_name) -> set[str]:
-    """Return symbol names exported from any barrel / __init__ file."""
+def _barrel_exports(
+    index,
+    store,
+    owner,
+    repo_name,
+    source_files: frozenset,
+    alias_map: dict,
+    psr4_map: Optional[dict] = None,
+) -> set[str]:
+    """Return symbol names exported from any barrel / __init__ file.
+
+    Recursively follows CommonJS ``module.exports = require('./X')`` and ES
+    module ``export * from './X'`` / ``export {…} from './X'`` patterns so
+    that names defined in ``./X`` count as barrel-exported. Without this,
+    libraries that re-export through an index file (Express, Lodash, etc.)
+    falsely appear dead. Bounded depth prevents pathological re-export
+    chains from blowing up the scan. (Issue: sverklo bench v1 — Express
+    `createApplication` flagged as dead due to `module.exports = require(
+    './lib/express')`.)
+    """
     exported: set[str] = set()
+    visited: set[str] = set()
+    MAX_DEPTH = 4
+
+    def _collect(file_path: str, depth: int) -> None:
+        if file_path in visited or depth > MAX_DEPTH:
+            return
+        visited.add(file_path)
+        content = store.get_file_content(owner, repo_name, file_path)
+        if not content:
+            return
+        # Identifiers literally present in this file (original behavior).
+        exported.update(re.findall(r"\b([A-Za-z_]\w*)\b", content))
+        # Recursively expand re-export targets.
+        targets: set[str] = set()
+        for m in _CJS_REEXPORT_RE.finditer(content):
+            targets.add(m.group(1))
+        for m in _ESM_REEXPORT_STAR_RE.finditer(content):
+            targets.add(m.group(1))
+        for m in _ESM_REEXPORT_NAMED_RE.finditer(content):
+            targets.add(m.group(1))
+        for spec in targets:
+            resolved = resolve_specifier(spec, file_path, source_files,
+                                         alias_map, psr4_map)
+            if resolved and resolved in source_files:
+                _collect(resolved, depth + 1)
+
     for f in index.source_files:
-        if not _is_barrel(f):
+        if _is_barrel(f):
+            _collect(f, 0)
+    return exported
+
+
+def _package_json_entries(index, store, owner, repo_name) -> set[str]:
+    """Return source files referenced by any ``package.json``'s ``main`` /
+    ``module`` / ``exports`` / ``bin`` field.
+
+    For JavaScript/TypeScript libraries there is no ``app.py``-equivalent
+    filename heuristic that identifies the consumer-facing entry point;
+    the canonical answer is whatever the package manifest declares as
+    ``main``. Without this, every library file looks unreachable and
+    Signal 1 fires for every symbol. (Issue: sverklo bench v1.)
+    """
+    entries: set[str] = set()
+    source_files = frozenset(index.source_files)
+    for f in index.source_files:
+        if _filename(f) != "package.json":
             continue
         content = store.get_file_content(owner, repo_name, f)
         if not content:
             continue
-        # Collect all word tokens that look like identifiers (simple heuristic)
-        exported.update(re.findall(r"\b([A-Za-z_]\w*)\b", content))
-    return exported
+        try:
+            pkg = json.loads(content)
+        except (ValueError, TypeError):
+            continue
+        if not isinstance(pkg, dict):
+            continue
+        candidates: list[str] = []
+        for key in ("main", "module", "browser"):
+            v = pkg.get(key)
+            if isinstance(v, str):
+                candidates.append(v)
+        # `exports` can be a string, a dict of subpaths, or a conditional dict.
+        exports = pkg.get("exports")
+        if isinstance(exports, str):
+            candidates.append(exports)
+        elif isinstance(exports, dict):
+            def _walk_exports(node):
+                if isinstance(node, str):
+                    candidates.append(node)
+                elif isinstance(node, dict):
+                    for v in node.values():
+                        _walk_exports(v)
+            _walk_exports(exports)
+        # `bin` can be a string or a {name: path} dict.
+        bins = pkg.get("bin")
+        if isinstance(bins, str):
+            candidates.append(bins)
+        elif isinstance(bins, dict):
+            candidates.extend(v for v in bins.values() if isinstance(v, str))
+
+        pkg_dir = f.replace("\\", "/").rsplit("/", 1)[0] if "/" in f else ""
+        for cand in candidates:
+            cand = cand.lstrip("./").replace("\\", "/")
+            joined = f"{pkg_dir}/{cand}" if pkg_dir else cand
+            joined = joined.lstrip("/")
+            # Try the literal path; then try resolve_specifier semantics
+            # (handles bare specifiers and extension-less imports).
+            if joined in source_files:
+                entries.add(joined)
+                continue
+            # Try common JS/TS extensions if missing.
+            for ext in ("", ".js", ".ts", ".mjs", ".cjs", ".jsx", ".tsx",
+                        "/index.js", "/index.ts", "/index.mjs", "/index.cjs"):
+                trial = joined + ext
+                if trial in source_files:
+                    entries.add(trial)
+                    break
+    return entries
 
 
 # ---------------------------------------------------------------------------
@@ -105,6 +266,8 @@ def get_dead_code_v2(
     repo: str,
     min_confidence: float = 0.5,
     include_tests: bool = False,
+    max_results: int = 100,
+    file_pattern: Optional[str] = None,
     storage_path: Optional[str] = None,
 ) -> dict:
     """Find likely-dead functions and methods using three independent signals.
@@ -115,6 +278,14 @@ def get_dead_code_v2(
                         Default 0.5 means at least 2 of 3 signals must fire.
         include_tests:  When False (default), test files are treated as
                         reachable and skipped.
+        max_results:    Cap on returned symbols (default 100). Pre-1.80.7
+                        the response was unbounded; on large libraries this
+                        could exceed 8k tokens per call. ``_meta.truncated``
+                        + ``_meta.total_matches`` flag when capped. Use 0
+                        for unlimited.
+        file_pattern:   Optional glob (e.g. ``"src/**"``, ``"*.py"``) — only
+                        analyse symbols whose file matches. Smaller scope
+                        means smaller, faster, more actionable results.
         storage_path:   Optional index storage path override.
 
     Returns:
@@ -122,6 +293,7 @@ def get_dead_code_v2(
         Each entry in ``dead_symbols``:
         ``{id, name, kind, file, line, confidence, signals}``
     """
+    import fnmatch
     t0 = time.monotonic()
     try:
         owner, name = _resolve_repo(repo, storage_path)
@@ -139,13 +311,25 @@ def get_dead_code_v2(
     alias_map = getattr(index, "alias_map", {}) or {}
     psr4_map = getattr(index, "psr4_map", None)
     rev = _build_reverse_adjacency(index.imports, source_files, alias_map, psr4_map)
+    forward = _build_forward_adjacency(index.imports, source_files, alias_map, psr4_map)
 
-    # Pre-compute reachable files from entry points (Signal 1 input)
-    entry_point_count = sum(1 for f in index.source_files if _is_entry_point(f))
-    reachable_files = _reachable_from_entry_points(list(index.source_files), rev)
+    # Pre-compute reachable files from entry points (Signal 1 input).
+    # Two heuristics: (a) classic filename match (app.py, main.py, etc.);
+    # (b) any file declared as `main`/`module`/`exports`/`bin` in a
+    # ``package.json`` (issue: sverklo bench v1 — Express has no
+    # filename-style entry point).
+    pkg_entries = _package_json_entries(index, store, owner, name)
+    entry_point_count = sum(1 for f in index.source_files if _is_entry_point(f)) + len(pkg_entries)
+    reachable_files = _reachable_from_entry_points(
+        list(index.source_files), rev, forward, extra_entries=pkg_entries
+    )
 
-    # Pre-compute barrel exports (Signal 3 input)
-    barrel_names = _barrel_exports(index, store, owner, name)
+    # Pre-compute barrel exports (Signal 3 input). Recursively follows CJS
+    # ``module.exports = require(...)`` / ESM ``export * from`` so that
+    # symbols re-exported through index.js are not flagged as dead.
+    barrel_names = _barrel_exports(
+        index, store, owner, name, source_files, alias_map, psr4_map
+    )
 
     # Pre-compute call graph: for each symbol, who calls it? (Signal 2 input)
     # Use AST call_references when available (O(N)), fall back to text heuristic.
@@ -202,12 +386,17 @@ def get_dead_code_v2(
         sym_file = sym.get("file", "")
         sym_name = sym.get("name", "")
 
-        # Skip entry-point files entirely
-        if _is_entry_point(sym_file):
+        # Skip entry-point files entirely (filename heuristic + package.json
+        # main fields).
+        if _is_entry_point(sym_file) or sym_file in pkg_entries:
             continue
 
         # Skip test files unless requested
         if not include_tests and _is_test_file(sym_file):
+            continue
+
+        # Optional file-pattern scope filter.
+        if file_pattern and not fnmatch.fnmatch(sym_file, file_pattern):
             continue
 
         # Skip symbols with entry-point decorators
@@ -243,6 +432,12 @@ def get_dead_code_v2(
 
     dead_symbols.sort(key=lambda x: (-x["confidence"], x["file"], x["line"]))
 
+    total_matches = len(dead_symbols)
+    truncated = False
+    if max_results and max_results > 0 and total_matches > max_results:
+        dead_symbols = dead_symbols[:max_results]
+        truncated = True
+
     timing_ms = round((time.monotonic() - t0) * 1000, 1)
     result: dict = {
         "repo": f"{owner}/{name}",
@@ -256,8 +451,14 @@ def get_dead_code_v2(
             "timing_ms": timing_ms,
             "methodology": "multi_signal",
             "confidence_level": "medium",
+            "total_matches": total_matches,
+            "truncated": truncated,
         },
     }
+    if file_pattern:
+        result["_meta"]["file_pattern"] = file_pattern
+    if pkg_entries:
+        result["_meta"]["package_json_entries"] = sorted(pkg_entries)
     if entry_point_count == 0:
         result["framework_warning"] = (
             "No standard entry points detected (e.g. main.py, app.py, __main__.py). "
