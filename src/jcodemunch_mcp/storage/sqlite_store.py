@@ -113,6 +113,11 @@ _INIT_PRAGMAS = [
     "PRAGMA journal_mode = WAL",
 ]
 
+# SQLite files in ~/.code-index/ that are NOT per-repo indexes — list_repos
+# must skip these so they don't get phantom-resolved as repos (and worse,
+# get auto-initialised with the code-index schema by _connect()).
+_NON_REPO_DB_FILES = frozenset({"telemetry.db"})
+
 # Keys stored in the meta table
 _META_KEYS = [
     "repo", "owner", "name", "indexed_at", "index_version",
@@ -1403,6 +1408,8 @@ class SQLiteIndexStore:
         _pairs = parse_path_map()
         repos = []
         for db_file in self.base_path.glob("*.db"):
+            if db_file.name in _NON_REPO_DB_FILES:
+                continue
             try:
                 entry = self._list_repo_from_db(db_file, _pairs)
                 if entry:
@@ -1443,7 +1450,7 @@ class SQLiteIndexStore:
         finally:
             conn.close()
 
-        if not meta:
+        if not meta or not meta.get("repo"):
             return None
         languages = json.loads(meta.get("languages", "{}"))
         entry = {

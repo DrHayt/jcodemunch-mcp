@@ -40,6 +40,8 @@ def _get_bare_name_map(store: IndexStore) -> dict[str, list[str]]:
     mapping: dict[str, list[str]] = {}
     for repo_entry in store.list_repos():
         owner_name = repo_entry["repo"]
+        if not owner_name or "/" not in owner_name:
+            continue
         _, repo_name = owner_name.split("/", 1)
         for key in (repo_name, repo_entry.get("display_name")):
             if key:

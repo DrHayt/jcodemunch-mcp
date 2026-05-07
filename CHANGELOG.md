@@ -2,6 +2,24 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.81.3] — 2026-05-06 — telemetry.db no longer poisons bare-name resolver
+
+### Fixed
+- **Bare-name `repo` lookups crashing when `JCODEMUNCH_PERF_TELEMETRY=1`**
+  (#276). `list_repos()` globbed `*.db` indiscriminately, so
+  `~/.code-index/telemetry.db` was treated as an indexed repo. Worse,
+  `_connect()` auto-initialised the code-index schema on it, vandalising
+  telemetry.db, and `_list_repo_from_db` returned a phantom entry with
+  `repo=""`. That empty owner/name then crashed `_get_bare_name_map`
+  (`"".split("/", 1)` → `ValueError: not enough values to unpack`),
+  aborting the bare-name cache mid-build and poisoning every subsequent
+  bare-name lookup for the session. Three-point fix: explicit skip-list
+  `_NON_REPO_DB_FILES` filters telemetry.db (and any future non-repo
+  `.db`) at both `list_repos` call sites; `_list_repo_from_db` now
+  treats missing/empty `repo` meta as not-a-repo; `_get_bare_name_map`
+  skips entries without `owner/name` shape. Thanks to @Will-Luck for
+  the precise root-cause analysis.
+
 ## [1.81.2] — 2026-05-06 — Security & robustness audit fixes
 
 ### Fixed

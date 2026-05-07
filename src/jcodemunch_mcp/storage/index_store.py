@@ -750,7 +750,10 @@ class IndexStore:
         _pairs = parse_path_map()
 
         # Pass 1: SQLite databases
+        from .sqlite_store import _NON_REPO_DB_FILES
         for db_file in self.base_path.glob("*.db"):
+            if db_file.name in _NON_REPO_DB_FILES:
+                continue
             slug = db_file.stem
             seen_slugs.add(slug)
             try:
