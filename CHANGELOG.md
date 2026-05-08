@@ -2,7 +2,10 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
-## [Unreleased]
+## [1.83.0] — 2026-05-08 — `get_file_outline` no longer drops nested symbols
+
+Thanks to @sanyapuer (#278) for the diagnosis, fix, and the test discipline
+that goes with it.
 
 ### Fixed
 - **`get_file_outline` silently dropped every nested symbol** (methods,
