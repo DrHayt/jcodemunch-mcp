@@ -637,9 +637,28 @@ async def _ensure_tool_schemas() -> dict[str, dict]:
 server = Server("jcodemunch-mcp")
 
 
+# Handshake watchdog: a stderr diagnostic that fires when the client never
+# completes an MCP handshake / never calls a handler. Reproduces the
+# Codex-CLI hang described in the v1.81.3 client report — under that bug,
+# `uvx` chatter on stdout corrupted the first frame and the client sat
+# silent for 5h+. This event is set on the first call into any MCP
+# handler (list_tools / list_resources / list_prompts / get_prompt /
+# call_tool); the watchdog in run_stdio_server prints a one-line hint to
+# stderr if it stays unset past JCODEMUNCH_HANDSHAKE_TIMEOUT (default 5s).
+_handshake_event: Optional[asyncio.Event] = None
+
+
+def _signal_handshake() -> None:
+    """Mark the handshake watchdog as satisfied. Idempotent and cheap."""
+    ev = _handshake_event
+    if ev is not None and not ev.is_set():
+        ev.set()
+
+
 @server.list_tools()
 async def list_tools() -> list[Tool]:
     """List all available tools."""
+    _signal_handshake()
     return _build_tools_list()
 
 
@@ -2715,6 +2734,7 @@ def _apply_description_overrides(tools: list) -> None:
 @server.list_resources()
 async def list_resources() -> list[Resource]:
     """Return empty resource list for client compatibility (e.g. Windsurf)."""
+    _signal_handshake()
     return []
 
 
@@ -2813,6 +2833,7 @@ Goal: Follow a suspected bug from symptom to root cause.
 @server.list_prompts()
 async def list_prompts() -> list[Prompt]:
     """Return available workflow guidance prompts."""
+    _signal_handshake()
     return [
         Prompt(
             name="workflow",
@@ -2849,6 +2870,7 @@ _PROMPT_MAP: dict[str, tuple[str, str]] = {
 @server.get_prompt()
 async def get_prompt(name: str, arguments: dict | None = None) -> GetPromptResult:
     """Return the requested prompt content."""
+    _signal_handshake()
     entry = _PROMPT_MAP.get(name)
     if entry is None:
         raise ValueError(f"Unknown prompt: {name}")
@@ -2950,6 +2972,7 @@ async def _auto_watch_if_needed(name: str, arguments: dict, storage_path: Option
 @server.call_tool(validate_input=False)
 async def call_tool(name: str, arguments: dict) -> list[TextContent]:
     """Handle tool calls."""
+    _signal_handshake()
     storage_path = os.environ.get("CODE_INDEX_PATH")
     logger.info("tool_call: %s args=%s", name, {k: v for k, v in arguments.items() if k != "content"})
 
@@ -4146,6 +4169,44 @@ async def run_stdio_server():
     _restore_session_state()
     # Log tier bundle / disabled_tools overlap warnings
     _log_startup_validation_warnings()
+
+    # Handshake watchdog. If the client never reaches any of our MCP
+    # handlers (list_tools, list_resources, list_prompts, get_prompt,
+    # call_tool) within JCODEMUNCH_HANDSHAKE_TIMEOUT seconds, write a
+    # one-line stderr hint. This catches stdio-channel corruption — the
+    # paying-client report against Codex/rmcp where uvx chatter on stdout
+    # made the client wait 5h+ for a frame that was never coming. Set
+    # JCODEMUNCH_HANDSHAKE_TIMEOUT=0 to disable.
+    global _handshake_event
+    _handshake_event = asyncio.Event()
+    try:
+        _handshake_timeout = float(os.environ.get("JCODEMUNCH_HANDSHAKE_TIMEOUT", "5"))
+    except (ValueError, TypeError):
+        _handshake_timeout = 5.0
+
+    async def _handshake_watchdog() -> None:
+        if _handshake_timeout <= 0:
+            return
+        try:
+            await asyncio.wait_for(_handshake_event.wait(), timeout=_handshake_timeout)
+        except asyncio.TimeoutError:
+            sys.stderr.write(
+                f"[jcodemunch-mcp] handshake not completed after "
+                f"{_handshake_timeout:.0f}s — the client has not called any MCP "
+                f"handler. If you spawn this server via `uvx`, stdout chatter "
+                f"from package resolution can corrupt the JSON-RPC channel for "
+                f"strict clients (notably Codex/rmcp). Workarounds: "
+                f"(1) install the binary with `pip install jcodemunch-mcp` and "
+                f"point your client at it directly, or (2) set UV_NO_PROGRESS=1 "
+                f"UV_QUIET=1 in the spawn env. Set JCODEMUNCH_HANDSHAKE_TIMEOUT=0 "
+                f"to silence this warning.\n"
+            )
+            sys.stderr.flush()
+        except asyncio.CancelledError:
+            pass
+
+    _watchdog_task = asyncio.create_task(_handshake_watchdog())
+
     try:
         async with stdio_server() as (read_stream, write_stream):
             await server.run(
@@ -4154,6 +4215,8 @@ async def run_stdio_server():
                 server.create_initialization_options(),
             )
     finally:
+        if not _watchdog_task.done():
+            _watchdog_task.cancel()
         from .storage import IndexStore
         IndexStore(base_path=os.environ.get("CODE_INDEX_PATH")).close()
 

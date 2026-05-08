@@ -2,6 +2,19 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.82.1] — 2026-05-08 — Handshake watchdog for stdio transport
+
+### Added
+- **Stdio handshake watchdog**: if the client does not call any MCP
+  handler (`list_tools`, `list_resources`, `list_prompts`, `get_prompt`,
+  `call_tool`) within `JCODEMUNCH_HANDSHAKE_TIMEOUT` seconds (default
+  5), write a one-line stderr hint pointing at likely causes and
+  workarounds. Surfaces stdio-channel corruption immediately instead of
+  letting strict clients (notably Codex/rmcp) sit silent for hours.
+  Fires from a paying-client report where `uvx` chatter on stdout
+  poisoned the first JSON-RPC frame; the host waited 5h 53min before
+  the operator gave up. Set `JCODEMUNCH_HANDSHAKE_TIMEOUT=0` to disable.
+
 ## [1.82.0] — 2026-05-08 — Worktree-aware canonical index discovery
 
 ### Added
