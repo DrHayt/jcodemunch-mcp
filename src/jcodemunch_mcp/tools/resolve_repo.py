@@ -23,6 +23,45 @@ def _compute_repo_id(folder_path: Path) -> str:
     return f"local/{resolved.name}-{digest}"
 
 
+def _git_common_dir(path: Path) -> Optional[Path]:
+    """Return the canonical Git common-dir for a path, or None.
+
+    For the main checkout this is the same as the `.git` directory; for
+    a linked worktree it points at the main repo's `.git`. So all worktrees
+    of a repository share a common-dir, which lets us match a worktree
+    against an already-indexed canonical checkout (issue #277).
+
+    Same env-neutralisation as `_git_toplevel` — system/global git config is
+    disabled so a hostile workspace can't influence the probe.
+    """
+    import os as _os
+    env = _os.environ.copy()
+    env["GIT_CONFIG_NOSYSTEM"] = "1"
+    env["GIT_CONFIG_GLOBAL"] = _os.devnull
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--git-common-dir"],
+            capture_output=True,
+            text=True,
+            cwd=str(path),
+            timeout=5,
+            stdin=subprocess.DEVNULL,
+            env=env,
+        )
+        if result.returncode == 0:
+            raw = result.stdout.strip()
+            if not raw:
+                return None
+            common = Path(raw)
+            if not common.is_absolute():
+                common = (path / common).resolve()
+            return common.resolve()
+    except (subprocess.TimeoutExpired, OSError):
+        pass
+    return None
+
+
 def _git_toplevel(path: Path) -> Optional[Path]:
     """Get the git repository root for a path, or None.
 
@@ -109,14 +148,69 @@ def resolve_repo(path: str, storage_path: Optional[str] = None) -> dict:
     # Not indexed — return the computed ID for the best candidate
     best = candidates[0]
     repo_id = _compute_repo_id(best)
+
+    # Worktree-aware canonical-index discovery (issue #277):
+    # if the path is a Git worktree, look for already-indexed repos that
+    # share the same --git-common-dir and surface them as candidates.
+    canonical_candidates = _find_canonical_candidates(best, store)
+
     elapsed = (time.perf_counter() - start) * 1000
-    return {
+    response: dict = {
         "found": True,
         "indexed": False,
         "repo": repo_id,
         "hint": "call index_folder to index this path",
         "_meta": {"timing_ms": round(elapsed, 1)},
     }
+    if canonical_candidates:
+        response["canonical_candidates"] = canonical_candidates
+        response["hint"] = (
+            "this is a Git worktree of an already-indexed repo — use one of "
+            "canonical_candidates for read-only lookups, or index this "
+            "worktree explicitly if you need branch-local/uncommitted state"
+        )
+    return response
+
+
+def _find_canonical_candidates(
+    path: Path, store: IndexStore
+) -> list[dict]:
+    """Find indexed repos sharing this path's Git common-dir.
+
+    Returns a list of `{repo, source_root, rationale}` dicts. Empty when the
+    path isn't in a Git repo, has no common-dir, or no indexed repo matches.
+    """
+    common = _git_common_dir(path)
+    if common is None:
+        return []
+
+    candidates: list[dict] = []
+    try:
+        repos = store.list_repos()
+    except Exception:
+        logger.debug("list_repos failed during worktree resolution", exc_info=True)
+        return []
+
+    for entry in repos:
+        source_root = entry.get("source_root", "")
+        if not source_root:
+            continue
+        try:
+            other_path = Path(source_root)
+            if not other_path.exists():
+                continue
+            other_common = _git_common_dir(other_path)
+        except (OSError, ValueError):
+            continue
+        if other_common is None:
+            continue
+        if other_common == common:
+            candidates.append({
+                "repo": entry.get("repo", ""),
+                "source_root": source_root,
+                "rationale": "shared --git-common-dir",
+            })
+    return candidates
 
 
 def _read_repo_metadata(store: IndexStore, owner: str, name: str) -> dict:

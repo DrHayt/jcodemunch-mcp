@@ -101,3 +101,81 @@ class TestResolveRepo:
         result = resolve_repo(str(tmp_path))
         assert "_meta" in result
         assert "timing_ms" in result["_meta"]
+
+
+class TestWorktreeCanonicalCandidates:
+    """Issue #277 — when a path is a Git worktree of an already-indexed
+    canonical checkout, surface the canonical repo as a candidate instead
+    of treating the worktree as a fresh unindexed target.
+    """
+
+    def _git(self, *args, cwd):
+        import subprocess
+        env = {
+            "GIT_AUTHOR_NAME": "test",
+            "GIT_AUTHOR_EMAIL": "t@example.com",
+            "GIT_COMMITTER_NAME": "test",
+            "GIT_COMMITTER_EMAIL": "t@example.com",
+        }
+        result = subprocess.run(
+            ["git", *args],
+            cwd=str(cwd),
+            capture_output=True,
+            text=True,
+            env={**__import__("os").environ, **env},
+        )
+        assert result.returncode == 0, f"git {args} failed: {result.stderr}"
+        return result.stdout
+
+    def test_worktree_surfaces_canonical_candidate(self, tmp_path):
+        """A worktree of an already-indexed repo lists the canonical as a candidate."""
+        canonical = tmp_path / "canonical"
+        canonical.mkdir()
+        self._git("init", "-b", "main", cwd=canonical)
+        (canonical / "main.py").write_text("def hello(): return 1\n", encoding="utf-8")
+        self._git("add", "main.py", cwd=canonical)
+        self._git("commit", "-m", "initial", cwd=canonical)
+
+        store_path = str(tmp_path / "store")
+        index_folder(str(canonical), use_ai_summaries=False, storage_path=store_path)
+
+        # Create a linked worktree on a new branch (sibling path).
+        worktree = tmp_path / "wt-feature"
+        self._git(
+            "worktree", "add", "-b", "feature", str(worktree), cwd=canonical
+        )
+
+        result = resolve_repo(str(worktree), storage_path=store_path)
+        assert result["found"] is True
+        assert result["indexed"] is False, (
+            "worktree path itself isn't indexed — that's the whole point"
+        )
+        assert "canonical_candidates" in result, (
+            f"expected canonical_candidates in {result}"
+        )
+        assert len(result["canonical_candidates"]) == 1
+        cand = result["canonical_candidates"][0]
+        assert cand["repo"].startswith("local/canonical-")
+        assert cand["rationale"] == "shared --git-common-dir"
+        assert "Git worktree" in result["hint"]
+
+    def test_unrelated_unindexed_path_has_no_candidates(self, tmp_path):
+        """A non-Git, non-worktree path stays on the original hint with no candidates."""
+        canonical = tmp_path / "canonical"
+        canonical.mkdir()
+        self._git("init", cwd=canonical)
+        (canonical / "main.py").write_text("def hello(): return 1\n", encoding="utf-8")
+        self._git("add", "main.py", cwd=canonical)
+        self._git("commit", "-m", "initial", cwd=canonical)
+
+        store_path = str(tmp_path / "store")
+        index_folder(str(canonical), use_ai_summaries=False, storage_path=store_path)
+
+        # An unrelated empty directory — not a worktree, not indexed.
+        unrelated = tmp_path / "unrelated"
+        unrelated.mkdir()
+
+        result = resolve_repo(str(unrelated), storage_path=store_path)
+        assert result["indexed"] is False
+        assert "canonical_candidates" not in result
+        assert result["hint"] == "call index_folder to index this path"

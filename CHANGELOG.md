@@ -2,6 +2,28 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.82.0] — 2026-05-08 — Worktree-aware canonical index discovery
+
+### Added
+- **`resolve_repo` now surfaces canonical candidates for Git worktrees**
+  (#277). When the resolved path isn't indexed but is a linked Git
+  worktree, the response includes a `canonical_candidates` list of
+  already-indexed repos that share the same `--git-common-dir`, plus
+  a `worktree_of`-flavoured hint. Non-Claude MCP clients (Codex, VS
+  Code, Cursor, Continue) running from temporary worktree paths can
+  now route to the canonical index instead of creating a redundant
+  per-worktree index. The branch-local indexing escape hatch is
+  preserved — `index_folder` on a worktree path still works exactly
+  as before for callers who want uncommitted/branch-local state.
+  Thanks to @rknighton for the well-scoped feature request and the
+  Git-signal direction.
+
+### Sequencing
+- Smallest useful slice; v1.83 will add opt-in `prefer_canonical`
+  auto-routing and an `aliases.jsonc` config layer for cross-server
+  canonical mapping (jcodemunch + jdocmunch + jdatamunch under one
+  alias). Sibling jdocmunch release will follow the same pattern.
+
 ## [1.81.3] — 2026-05-06 — telemetry.db no longer poisons bare-name resolver
 
 ### Fixed
