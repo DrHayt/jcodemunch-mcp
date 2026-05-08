@@ -33,6 +33,24 @@ def _get_import_index(index) -> dict[str, list[tuple[str, dict]]]:
     return index._import_name_index
 
 
+def _find_import_line(content: str, specifier: str) -> Optional[int]:
+    """Return the 1-based line number where ``specifier`` first appears in
+    quotes (single, double, or backtick) in ``content``.
+
+    Heuristic — matches ``from 'X' import``, ``import 'X'``, ``require('X')``,
+    ``import('X')``, ``from "X"``, etc. Robust to whitespace and quote style.
+    Returns None if the specifier isn't found in any quoting context.
+    """
+    if not content or not specifier:
+        return None
+    needles = (f'"{specifier}"', f"'{specifier}'", f"`{specifier}`")
+    for idx, line in enumerate(content.splitlines(), start=1):
+        for needle in needles:
+            if needle in line:
+                return idx
+    return None
+
+
 def _calling_symbols_in_file(
     index,
     store,
@@ -126,6 +144,25 @@ def _find_references_single(
 
     results = [{"file": f, "matches": m} for f, m in file_matches.items()]
     results.sort(key=lambda r: r["file"])
+
+    # Enrich each match with the line number of its import statement so
+    # downstream consumers (regex harvesters, IDE deeplinks, code review
+    # bots) can jump straight to the import site instead of opening the
+    # file and grepping. Heuristic: first line where the specifier
+    # appears quoted. Skipped silently when file content is unavailable
+    # (remote-only indexes); existing callers see additive `line` field.
+    if store is not None:
+        for ref in results:
+            try:
+                content = store.get_file_content(owner, name, ref["file"])
+            except Exception:
+                content = None
+            if not content:
+                continue
+            for match in ref["matches"]:
+                line = _find_import_line(content, match.get("specifier", ""))
+                if line is not None:
+                    match["line"] = line
 
     # Optional: enrich each reference with which symbols in that file call the identifier
     if include_call_chain and store is not None:

@@ -2,6 +2,26 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.83.1] — 2026-05-08 — Reference-tool response shapes carry line numbers + flat import aliases
+
+### Added
+- **`find_references` matches now carry `line`** — each entry in
+  `references[i].matches[j]` includes the 1-based line number of the
+  import statement that introduced the reference. Lets harvesters and
+  IDE deeplinks jump straight to the import site instead of opening the
+  file to grep. Heuristic (first line where the specifier appears in
+  any quote style); falls through silently when file content isn't
+  available (remote-only indexes). Strictly additive — the existing
+  `specifier`, `names`, `match_type` fields are unchanged.
+- **`get_dependency_graph` exposes top-level `imports` and `importers`
+  arrays** — the depth-1 outgoing and incoming neighbors of the queried
+  file, as a flat list of file paths. Sibling of `edges` and
+  `neighbors`. Most consumers asking *what does X import / who imports
+  X?* want exactly this; emitting it directly removes the need to walk
+  `neighbors[file][...]` and matches the universal `imports: [...]`
+  convention that flat parsers expect. `nodes`, `edges`, and `neighbors`
+  remain unchanged for callers that already use them.
+
 ## [1.83.0] — 2026-05-08 — `get_file_outline` no longer drops nested symbols
 
 Thanks to @sanyapuer (#278) for the diagnosis, fix, and the test discipline

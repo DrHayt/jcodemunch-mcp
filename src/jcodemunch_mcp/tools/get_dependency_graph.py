@@ -181,6 +181,16 @@ def get_dependency_graph(
             import logging as _logging
             _logging.getLogger(__name__).debug("cross_repo dependency graph failed", exc_info=True)
 
+    # Top-level convenience aliases for the queried file's depth-1 neighbors.
+    # Most consumers asking "what does file X import / who imports it?" want
+    # exactly this — the depth-1 outgoing/incoming sets. Keeping them as
+    # siblings of `edges` lets a parser consume the response without walking
+    # `neighbors[file][...]` and lets harvesters that look for a flat
+    # `imports: [...]` array (a near-universal convention) pick it up.
+    file_neighbors = neighbors.get(file, {})
+    imports_list = list(file_neighbors.get("imports", []))
+    importers_list = list(file_neighbors.get("imported_by", []))
+
     elapsed = (time.perf_counter() - start) * 1000
     result = {
         "repo": f"{owner}/{name}",
@@ -191,6 +201,8 @@ def get_dependency_graph(
         "edge_count": len(unique_edges),
         "nodes": node_list,
         "edges": unique_edges,
+        "imports": imports_list,
+        "importers": importers_list,
         "neighbors": neighbors,
         "_meta": {"timing_ms": round(elapsed, 1)},
     }
