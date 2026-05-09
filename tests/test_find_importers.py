@@ -1364,3 +1364,121 @@ import UserTable from './components/UserTable.vue'
         assert "./components/UserTable.vue" in specifiers
         # NavBar only in <template>, not imported — synthetic edge
         assert "NavBar" in specifiers
+
+
+# ---------------------------------------------------------------------------
+# v1.93.0: barrel-aware import graph
+# ---------------------------------------------------------------------------
+
+class TestExportStarCapture:
+    """v1.93.0: `export * from <spec>` is captured with is_re_export=True
+    so the graph builder can transitively expand barrel chains."""
+
+    def test_export_star_captured_with_flag(self):
+        result = extract_imports(
+            "export * from './decorators';\nexport * from './enums';",
+            "src/index.ts", "typescript",
+        )
+        specs = {r["specifier"]: r for r in result}
+        assert "./decorators" in specs
+        assert specs["./decorators"].get("is_re_export") is True
+        assert specs["./enums"].get("is_re_export") is True
+
+    def test_export_star_as_namespace_captured(self):
+        result = extract_imports(
+            "export * as utils from './utils';",
+            "src/index.ts", "typescript",
+        )
+        specs = {r["specifier"]: r for r in result}
+        assert "./utils" in specs
+        assert specs["./utils"].get("is_re_export") is True
+
+    def test_selective_export_not_flagged_as_re_export(self):
+        # `export { X } from` is selective — not a barrel; treated as
+        # a regular import edge, not a re-export.
+        result = extract_imports(
+            "export { Foo } from './foo';",
+            "src/index.ts", "typescript",
+        )
+        specs = {r["specifier"]: r for r in result}
+        assert "./foo" in specs
+        assert specs["./foo"].get("is_re_export") is not True
+
+
+class TestDottedSpecifierResolution:
+    """v1.93.0: `from './foo.service'` resolves to `./foo.service.ts`,
+    even though the dotted basename used to confuse splitext into
+    treating `.service` as the file extension."""
+
+    @pytest.mark.parametrize("specifier,target_filename", [
+        ("./foo.service",      "foo.service.ts"),
+        ("./bar.controller",   "bar.controller.ts"),
+        ("./baz.decorator",    "baz.decorator.ts"),
+        ("./qux.module",       "qux.module.ts"),
+        ("./order.repository", "order.repository.ts"),
+    ])
+    def test_dotted_basename_resolves(self, specifier, target_filename):
+        source_files = frozenset({f"src/app/{target_filename}", "src/app/index.ts"})
+        result = resolve_specifier(specifier, "src/app/index.ts", source_files)
+        assert result == f"src/app/{target_filename}"
+
+    def test_real_extension_still_works(self):
+        # `./styles.css` should keep its .css extension, not get TS/JS suffixes.
+        source_files = frozenset({"src/styles.css"})
+        result = resolve_specifier("./styles.css", "src/index.ts", source_files)
+        assert result == "src/styles.css"
+
+    def test_js_to_ts_aliasing_still_works(self):
+        # `./foo.js` may resolve to `./foo.ts` (TS-ESM convention).
+        source_files = frozenset({"src/foo.ts"})
+        result = resolve_specifier("./foo.js", "src/index.ts", source_files)
+        assert result == "src/foo.ts"
+
+
+class TestBarrelAwareFindImporters:
+    """v1.93.0: when a file imports a barrel, find_importers credits the
+    leaf files reached through `export * from` chains."""
+
+    def _index(self, tmp_path: Path, files: dict[str, str]):
+        src = tmp_path / "src"
+        src.mkdir()
+        for rel, content in files.items():
+            f = src / rel
+            f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(content)
+        store = tmp_path / "store"
+        r = index_folder(str(src), use_ai_summaries=False, storage_path=str(store))
+        assert r["success"] is True
+        return r["repo"], str(store)
+
+    def test_three_deep_barrel_chain_credits_leaf(self, tmp_path):
+        # Layout: consumer.ts → @lib (root) → core/index → core/decorators/injectable
+        repo, store = self._index(tmp_path, {
+            "consumer.ts":                  "import { Injectable } from './lib';\n",
+            "lib/index.ts":                 "export * from './core';\n",
+            "lib/core/index.ts":            "export * from './injectable.decorator';\n",
+            "lib/core/injectable.decorator.ts":
+                "export function Injectable() { return () => {}; }\n",
+        })
+        result = find_importers(
+            repo=repo,
+            file_path="lib/core/injectable.decorator.ts",
+            storage_path=store,
+        )
+        importers = [i["file"] for i in result.get("importers", [])]
+        assert "consumer.ts" in importers, (
+            f"barrel chain not expanded; importers were {importers}"
+        )
+
+    def test_re_exporters_themselves_are_not_listed(self, tmp_path):
+        # The barrel files (lib/index.ts, core/index.ts) re-export the leaf;
+        # they shouldn't show up as importers — they're forwarders.
+        repo, store = self._index(tmp_path, {
+            "consumer.ts":            "import { Foo } from './lib';\n",
+            "lib/index.ts":           "export * from './foo';\n",
+            "lib/foo.ts":             "export const Foo = 1;\n",
+        })
+        result = find_importers(repo=repo, file_path="lib/foo.ts", storage_path=store)
+        importers = [i["file"] for i in result.get("importers", [])]
+        assert "consumer.ts" in importers
+        assert "lib/index.ts" not in importers

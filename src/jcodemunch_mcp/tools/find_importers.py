@@ -1,6 +1,7 @@
 """Find all files that import from a given file path."""
 
 import time
+from collections import deque
 from typing import Optional
 
 from ..storage import IndexStore
@@ -10,6 +11,53 @@ from .package_registry import (
     build_package_registry,
     extract_root_package_from_specifier,
 )
+
+
+def _resolve_to_leaves(
+    specifier: str,
+    src_file: str,
+    source_files: frozenset,
+    alias_map,
+    psr4_map,
+    re_exports: dict[str, list[str]],
+) -> set[str]:
+    """Resolve `specifier` to its direct target plus every leaf reachable
+    through `export * from` re-export chains. Used by find_importers so
+    that importing a barrel attributes Ca to leaf definition files
+    instead of stopping at the barrel.
+    """
+    direct = resolve_specifier(specifier, src_file, source_files, alias_map, psr4_map)
+    if not direct:
+        return set()
+    leaves: set[str] = {direct}
+    queue: deque = deque([direct])
+    while queue:
+        t = queue.popleft()
+        for leaf in re_exports.get(t, ()):
+            if leaf not in leaves:
+                leaves.add(leaf)
+                queue.append(leaf)
+    return leaves
+
+
+def _build_re_exports(
+    imports: dict, source_files: frozenset, alias_map, psr4_map,
+) -> dict[str, list[str]]:
+    """Map each barrel file to the files it forwards via `export * from`.
+    Mirrors get_dependency_graph._build_re_export_map; duplicated here to
+    avoid a circular import."""
+    re_exports: dict[str, list[str]] = {}
+    for src_file, file_imports in imports.items():
+        leaves: list[str] = []
+        for imp in file_imports:
+            if not imp.get("is_re_export"):
+                continue
+            target = resolve_specifier(imp["specifier"], src_file, source_files, alias_map, psr4_map)
+            if target and target != src_file:
+                leaves.append(target)
+        if leaves:
+            re_exports[src_file] = list(dict.fromkeys(leaves))
+    return re_exports
 
 
 def _find_importers_single(
@@ -31,16 +79,28 @@ def _find_importers_single(
         }
 
     source_files = frozenset(index.source_files)
+    alias_map = index.alias_map
+    psr4_map = getattr(index, "psr4_map", None)
 
-    # Build a set of all files that are imported by at least one other file.
-    # Used to annotate each importer with has_importers so the caller can detect
-    # dead chains (an importer with has_importers=False is itself unreachable).
+    # v1.93.0: barrel-aware resolution. When a file imports `@nestjs/common`
+    # (which resolves to packages/common/index.ts) and that index.ts has
+    # `export * from './decorators'`, the importer is also credited with
+    # importing the leaf files reached transitively through the chain.
+    # Old indexes without `is_re_export` data degrade to the prior behavior.
+    re_exports = _build_re_exports(index.imports, source_files, alias_map, psr4_map)
+
+    # Build a set of all files that are imported by at least one other file
+    # (used for has_importers). Counts barrel-expanded leaves so a leaf
+    # definition file isn't flagged as orphan just because its only
+    # importers reach it via re-exports.
     files_that_are_imported: set[str] = set()
     for src_file, file_imports in index.imports.items():
         for imp in file_imports:
-            resolved = resolve_specifier(imp["specifier"], src_file, source_files, index.alias_map, getattr(index, "psr4_map", None))
-            if resolved:
-                files_that_are_imported.add(resolved)
+            if imp.get("is_re_export"):
+                continue  # re-exports forward, not consume
+            files_that_are_imported.update(
+                _resolve_to_leaves(imp["specifier"], src_file, source_files, alias_map, psr4_map, re_exports)
+            )
 
     results = []
 
@@ -48,8 +108,10 @@ def _find_importers_single(
         if src_file == file_path:
             continue
         for imp in file_imports:
-            resolved = resolve_specifier(imp["specifier"], src_file, source_files, index.alias_map, getattr(index, "psr4_map", None))
-            if resolved == file_path:
+            if imp.get("is_re_export"):
+                continue  # re-export-only files are forwarders, not consumers
+            leaves = _resolve_to_leaves(imp["specifier"], src_file, source_files, alias_map, psr4_map, re_exports)
+            if file_path in leaves:
                 results.append({
                     "file": src_file,
                     "specifier": imp["specifier"],
@@ -102,27 +164,40 @@ def _find_importers_batch(
         }
 
     source_files = frozenset(index.source_files)
+    alias_map = index.alias_map
+    psr4_map = getattr(index, "psr4_map", None)
 
-    # Pass 1: build files_that_are_imported (needed for has_importers annotation)
+    # v1.93.0: barrel-aware resolution. See _find_importers_single docstring.
+    re_exports = _build_re_exports(index.imports, source_files, alias_map, psr4_map)
+
+    # Pass 1: build files_that_are_imported (counts barrel-expanded leaves)
     files_that_are_imported: set[str] = set()
     for src_file, file_imports in index.imports.items():
         for imp in file_imports:
-            resolved = resolve_specifier(imp["specifier"], src_file, source_files, index.alias_map, getattr(index, "psr4_map", None))
-            if resolved:
-                files_that_are_imported.add(resolved)
+            if imp.get("is_re_export"):
+                continue
+            files_that_are_imported.update(
+                _resolve_to_leaves(imp["specifier"], src_file, source_files, alias_map, psr4_map, re_exports)
+            )
 
-    # Pass 2: build import_map using the complete set
+    # Pass 2: build import_map. Each importer is recorded under every leaf
+    # its specifier reaches (including transitively through barrels).
     import_map: dict[str, list[dict]] = {}
     for src_file, file_imports in index.imports.items():
         for imp in file_imports:
-            resolved = resolve_specifier(imp["specifier"], src_file, source_files, index.alias_map, getattr(index, "psr4_map", None))
-            if resolved:
-                import_map.setdefault(resolved, []).append({
-                    "file": src_file,
-                    "specifier": imp["specifier"],
-                    "names": imp.get("names", []),
-                    "has_importers": src_file in files_that_are_imported,
-                })
+            if imp.get("is_re_export"):
+                continue
+            leaves = _resolve_to_leaves(imp["specifier"], src_file, source_files, alias_map, psr4_map, re_exports)
+            if not leaves:
+                continue
+            entry = {
+                "file": src_file,
+                "specifier": imp["specifier"],
+                "names": imp.get("names", []),
+                "has_importers": src_file in files_that_are_imported,
+            }
+            for leaf in leaves:
+                import_map.setdefault(leaf, []).append(entry)
 
     results = []
     for file_path in file_paths:

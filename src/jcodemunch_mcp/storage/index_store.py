@@ -21,7 +21,12 @@ from .sqlite_store import SQLiteIndexStore, _VERIFIED_PATHS
 logger = logging.getLogger(__name__)
 
 # Bump this when the index schema changes in an incompatible way.
-INDEX_VERSION = 9
+# v10 (1.93.0): import edges may carry `is_re_export: True` to mark
+# `export * from <spec>` (barrel) statements. Old v9 indexes lack this
+# flag and would behave as v1.92.0 (barrels not transitively expanded);
+# bumping forces a full re-extract so downstream coupling/find_importers
+# scoring reflects the fix.
+INDEX_VERSION = 10
 
 
 @functools.lru_cache(maxsize=16)
