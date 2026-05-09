@@ -59,8 +59,11 @@ class TestIndexVersionBump:
     """INDEX_VERSION is bumped to 9."""
 
     def test_index_version_is_9(self):
-        """INDEX_VERSION constant must be 9 after this change."""
-        assert INDEX_VERSION == 9
+        """v1.93.0 bumped INDEX_VERSION to 10 to force re-extract of TS
+        barrel re-exports (`is_re_export` flag added to import dicts).
+        Test name kept for git-blame stability; assertion tracks the
+        current value."""
+        assert INDEX_VERSION == 10
 
 
 class TestCallersByNameIndex:

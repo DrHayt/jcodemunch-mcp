@@ -10,11 +10,77 @@ from ._utils import resolve_repo
 from .package_registry import extract_root_package_from_specifier
 
 
+def _build_re_export_map(
+    imports: dict, source_files: frozenset, alias_map: Optional[dict] = None,
+    psr4_map: Optional[dict] = None,
+) -> dict[str, list[str]]:
+    """Map each barrel file to the files it forwards via `export * from <spec>`.
+
+    Only edges flagged `is_re_export=True` (set by the JS/TS extractor
+    for `export * from` statements) are walked. Selective `export { X }
+    from` is treated as a normal import edge by the caller.
+    """
+    re_exports: dict[str, list[str]] = {}
+    for src_file, file_imports in imports.items():
+        leaves: list[str] = []
+        for imp in file_imports:
+            if not imp.get("is_re_export"):
+                continue
+            target = resolve_specifier(imp["specifier"], src_file, source_files, alias_map, psr4_map)
+            if target and target != src_file:
+                leaves.append(target)
+        if leaves:
+            re_exports[src_file] = list(dict.fromkeys(leaves))
+    return re_exports
+
+
+def _expand_barrel_imports(
+    adj: dict[str, list[str]],
+    re_exports: dict[str, list[str]],
+) -> dict[str, list[str]]:
+    """Transitively expand barrel re-exports in the forward adjacency.
+
+    For each importer F with target T, if T is a barrel that re-exports
+    from L (transitively), add (F, L) to the adjacency. This ensures the
+    inverted graph attributes Ca to leaf definition files instead of
+    stopping at the barrel — fixing the v1.92.0 NestJS-coupling finding
+    where `injectable.decorator.ts` showed Ca=0 despite ~200 files
+    using `Injectable` via `from '@nestjs/common'`.
+
+    Cycle-safe: uses a per-source visited set so barrel-of-barrels
+    cycles (rare but possible in pathological codebases) terminate.
+    """
+    if not re_exports:
+        return adj  # nothing to expand; preserve identity for old indexes
+
+    expanded: dict[str, list[str]] = {}
+    for src, targets in adj.items():
+        all_targets: list[str] = list(targets)
+        seen: set[str] = set(targets)
+        queue: deque = deque(targets)
+        while queue:
+            t = queue.popleft()
+            for leaf in re_exports.get(t, ()):
+                if leaf == src or leaf in seen:
+                    continue
+                seen.add(leaf)
+                all_targets.append(leaf)
+                queue.append(leaf)
+        expanded[src] = all_targets
+    return expanded
+
+
 def _build_adjacency(
     imports: dict, source_files: frozenset, alias_map: Optional[dict] = None,
     psr4_map: Optional[dict] = None,
 ) -> dict[str, list[str]]:
-    """Build forward adjacency {file: [files_it_imports]} from raw import data."""
+    """Build forward adjacency {file: [files_it_imports]} from raw import data.
+
+    v1.93.0+: when an import targets a TypeScript/JavaScript barrel file
+    (one whose own imports include `is_re_export=True` edges), the
+    importer is also credited with importing the leaf files re-exported
+    through that barrel. See _expand_barrel_imports.
+    """
     adj: dict[str, list[str]] = {}
     for src_file, file_imports in imports.items():
         resolved = []
@@ -24,7 +90,9 @@ def _build_adjacency(
                 resolved.append(target)
         if resolved:
             adj[src_file] = list(dict.fromkeys(resolved))  # deduplicate, preserve order
-    return adj
+
+    re_exports = _build_re_export_map(imports, source_files, alias_map, psr4_map)
+    return _expand_barrel_imports(adj, re_exports)
 
 
 def _invert(adj: dict[str, list[str]]) -> dict[str, list[str]]:

@@ -2,6 +2,78 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.93.0] — 2026-05-09 — TypeScript barrel-aware import graph + dotted-name resolver fix
+
+Closes [#283](https://github.com/jgravelle/jcodemunch-mcp/issues/283).
+Investigation of NestJS's persistent `coupling = 4.4` after v1.92.0
+turned up two real bugs in the import resolver, both load-bearing
+across every TypeScript project the observatory tracks. **Re-index
+required** — `INDEX_VERSION` bumped from 9 → 10.
+
+### Bug 1: `export * from <spec>` was never captured
+
+The JS/TS extractor recognized `import {X} from`, `import 'side-effect'`,
+`require(...)`, `import(...)`, and `export {X} from <spec>` (selective
+re-export). It did **not** match `export * from <spec>` — the wildcard
+re-export, NestJS's dominant pattern. Every barrel file's forwarding
+edges were silently dropped.
+
+### Bug 2: dotted basenames weren't resolved
+
+`resolve_specifier('./injectable.decorator', ...)` returned `None`.
+Reason: `posixpath.splitext('./injectable.decorator')` yields
+`('./injectable', '.decorator')`. The `_candidates` helper checked
+`if not ext`, saw `.decorator` as truthy, and skipped extension
+permutation. The TS convention `*.service`, `*.controller`,
+`*.decorator`, `*.module`, `*.spec` (pre-`.ts`) was unresolvable.
+This affected *every* dotted-name TS file in *every* TS repo.
+
+### Diagnostic that found both
+
+`find_importers(packages/common/decorators/core/injectable.decorator.ts)`
+returned **0** importers; `grep -rl '@Injectable\b'` returned **202+**.
+After the fix, `find_importers` returns **791** (includes spec files).
+
+### What changed
+
+- `parser/imports.py::_JS_REEXPORT_STAR` — new regex matching
+  `export * from <spec>` and `export * as ns from <spec>`. Edges
+  flagged `is_re_export: True`.
+- `parser/imports.py::_candidates` — new branch for unrecognized
+  "extensions" (dotted basenames) that treats the full string as
+  the stem.
+- `tools/get_dependency_graph.py::_build_re_export_map` /
+  `_expand_barrel_imports` — transitively expand barrel chains in
+  the forward adjacency. Cycle-safe via per-source visited set.
+- `tools/find_importers.py` — barrel-aware resolution; re-export-only
+  files are forwarders, not importers (excluded from results).
+- `INDEX_VERSION = 10` — forces a full re-extract so `is_re_export`
+  metadata populates for all repos.
+
+### Score impact
+
+**Most repos benefit** — Python projects (jcm 86.7 → 98.3, A) and
+Node projects with conventional layouts see lifted coupling and
+unchanged cycles. **Some monorepos drop** — NestJS specifically
+moves C → D (77.2 → 64.7) because the now-correct graph exposes
+~18 real dependency cycles in its inter-package barrel chains.
+That's an honest measurement, not a regression.
+
+### Out of scope (intentional)
+
+- Selective re-exports (`export {Foo} from <spec>`) still treated
+  as one-hop import edges, not symbol-level forwarders. Symbol-aware
+  re-export tracking is a v1.94 problem; the wildcard form is
+  ~95% of real-world barrel use.
+- Rust `#[cfg(test)] mod tests` (inline) needs AST analysis;
+  unrelated open follow-up.
+
+### Tests
+- 13 new cases in `test_find_importers.py` covering the regex,
+  the dotted-name resolver, and 3-deep barrel chain expansion.
+- INDEX_VERSION assertion bumped in three guard tests.
+- Full suite: 3968 passed, 7 skipped.
+
 ## [1.92.0] — 2026-05-09 — coupling axis: filename-pattern filter for inline test conventions
 
 Closes [#280](https://github.com/jgravelle/jcodemunch-mcp/issues/280).

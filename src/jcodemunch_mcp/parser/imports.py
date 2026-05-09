@@ -22,8 +22,16 @@ _JS_IMPORT_FROM = re.compile(
 _JS_SIDE_EFFECT = re.compile(r"""(?:^|\n)\s*import\s+['"]([^'"]+)['"]""", re.MULTILINE)
 # JS/TS: require('specifier')
 _JS_REQUIRE = re.compile(r"""require\s*\(\s*['"]([^'"]+)['"]\s*\)""", re.MULTILINE)
-# JS/TS: export { A } from 'specifier'  (re-export without full import parse)
+# JS/TS: export { A } from 'specifier'  (selective re-export)
 _JS_REEXPORT = re.compile(r"""(?:^|\n)\s*export\s+\{[^}]*\}\s+from\s+['"]([^'"]+)['"]""", re.MULTILINE)
+# JS/TS: export * from 'specifier'  or  export * as ns from 'specifier'  (wildcard re-export = barrel)
+# Captured separately so the graph builder can treat barrel re-exports
+# transitively — files importing the barrel transitively credit Ca to
+# every file the barrel re-exports from.
+_JS_REEXPORT_STAR = re.compile(
+    r"""(?:^|\n)\s*export\s*\*\s*(?:as\s+\w+\s+)?from\s+['"]([^'"]+)['"]""",
+    re.MULTILINE,
+)
 # JS/TS: import('specifier') — dynamic import (Vue Router lazy routes, code splitting)
 _JS_DYNAMIC_IMPORT = re.compile(r"""import\s*\(\s*['"]([^'"]+)['"]\s*\)""", re.MULTILINE)
 
@@ -95,18 +103,25 @@ def _clean_names(raw: str) -> list[str]:
 
 
 def _extract_js_imports(content: str) -> list[dict]:
-    edges = []
+    edges: list[dict] = []
     seen: set[str] = set()
 
-    def add(specifier: str, names: list[str]) -> None:
+    def add(specifier: str, names: list[str], *, is_re_export: bool = False) -> None:
         if specifier not in seen:
             seen.add(specifier)
-            edges.append({"specifier": specifier, "names": names})
+            edge: dict = {"specifier": specifier, "names": names}
+            if is_re_export:
+                edge["is_re_export"] = True
+            edges.append(edge)
         else:
-            # Merge names into existing entry
+            # Merge names into existing entry; promote to re-export if either
+            # source flagged it (the barrel-aware graph treats re-export edges
+            # specially, so the flag must survive the merge).
             for e in edges:
                 if e["specifier"] == specifier:
                     e["names"] = sorted(set(e["names"]) | set(names))
+                    if is_re_export:
+                        e["is_re_export"] = True
                     break
 
     for m in _JS_IMPORT_FROM.finditer(content):
@@ -127,9 +142,17 @@ def _extract_js_imports(content: str) -> list[dict]:
         add(m.group(1), [])
 
     for m in _JS_REEXPORT.finditer(content):
-        # Only add if not already captured by _JS_IMPORT_FROM
+        # Selective re-export `export { X } from <spec>`. Treated as a
+        # normal import edge (not a barrel) because only specific names
+        # are forwarded.
         if m.group(1) not in seen:
             add(m.group(1), [])
+
+    for m in _JS_REEXPORT_STAR.finditer(content):
+        # Wildcard re-export `export * from <spec>` — barrel pattern.
+        # Tagged so _build_adjacency can transitively expand barrel
+        # importers into importers of the re-exported leaf files.
+        add(m.group(1), [], is_re_export=True)
 
     for m in _JS_DYNAMIC_IMPORT.finditer(content):
         add(m.group(1), [])
@@ -579,21 +602,38 @@ def _get_sql_stems(source_files: set[str]) -> dict[str, str]:
 
 
 def _candidates(base: str) -> list[str]:
-    """Generate path candidates with and without extension."""
+    """Generate path candidates with and without extension.
+
+    Cases:
+    - No extension (`./foo`): try every known source extension and the
+      barrel-index forms.
+    - JS extension (`./foo.js`): plus TS/TSX equivalents (TS-ESM convention).
+    - Recognized file extension other than .js: keep as-is.
+    - Unrecognized "extension" (`./injectable.decorator`, `./foo.service`,
+      `./order.spec` if treated as code): the dotted suffix is part of
+      the basename, not a file extension. Try the same candidates as
+      the no-extension case so TS/JS naming conventions like
+      `*.service.ts`, `*.decorator.ts`, `*.controller.ts` resolve.
+    """
     cands = [base]
     _, ext = posixpath.splitext(base)
     if not ext:
         for e in _ALL_EXTENSIONS:
             cands.append(base + e)
-        # index file
         for e in _JS_EXTENSIONS:
             cands.append(posixpath.join(base, "index" + e))
         cands.append(posixpath.join(base, "__init__.py"))
     elif ext == ".js":
-        # TypeScript ESM convention: 'import "./foo.js"' may resolve to './foo.ts' or './foo.tsx'
         stem = base[:-3]
         cands.append(stem + ".ts")
         cands.append(stem + ".tsx")
+    elif ext not in _ALL_EXTENSIONS:
+        # Dotted basename: TS/JS convention (`*.service`, `*.decorator`,
+        # `*.module`, `*.spec`, etc.). Treat the whole `base` as a stem.
+        for e in _ALL_EXTENSIONS:
+            cands.append(base + e)
+        for e in _JS_EXTENSIONS:
+            cands.append(posixpath.join(base, "index" + e))
     return cands
 
 
