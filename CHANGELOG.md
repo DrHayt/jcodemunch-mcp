@@ -2,6 +2,43 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.88.0] — 2026-05-09 — Health-radar GitHub Action + `health` CLI
+
+todo.md item #5 (closeout). v1.87 shipped the radar data layer; this
+release ships the PR-time auto-comment surface that turns it into
+content-marketing infrastructure.
+
+### Added
+- **`jcodemunch-mcp/.github/actions/health-radar` composite action.**
+  Runs in any consumer repo's CI on `pull_request` triggers. Indexes
+  the PR branch + base branch, computes the radar on each, diffs them,
+  and posts a sticky markdown PR comment. **Suggestion-style — never
+  blocks merges.** Uses an HTML marker (`<!-- jcm-health-radar -->`)
+  on the first line so subsequent runs PATCH the same comment instead
+  of spamming the PR.
+- **`jcodemunch-mcp health` CLI subcommand.** Thin wrapper over
+  `get_repo_health` that prints the full JSON response (or just the
+  `radar` sub-field with `--radar-only`) to stdout. Designed for CI
+  pipelines and shell scripting; the new Action uses it directly.
+- **Action documentation** at `.github/actions/health-radar/README.md`
+  with a one-paste workflow example. Two-line install — `actions/checkout@v4`
+  + `uses: jgravelle/jcodemunch-mcp/.github/actions/health-radar@v1.88.0`.
+- **Dogfood workflow** at `.github/workflows/health-radar.yml` runs
+  the action on every PR to this repo.
+
+### Why a comment, not a status check
+A heuristic that blocks merges gets the Action disabled by the first
+frustrated maintainer. The radar comment is **explanatory, not
+gating** — reviewers see the deltas, decide for themselves. Status
+checks remain a possible v1.89 opt-in if users ask for it.
+
+### Action consumer surface
+```yaml
+- uses: jgravelle/jcodemunch-mcp/.github/actions/health-radar@v1.88.0
+```
+That's the whole setup. Inputs (`python-version`, `jcodemunch-version`,
+`base-ref`, `github-token`) all have sensible defaults.
+
 ## [1.87.0] — 2026-05-09 — Six-axis health radar + diff helper
 
 todo.md item #5 (foundational layer). New radar field on

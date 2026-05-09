@@ -1,0 +1,29 @@
+# Dogfood the in-repo health-radar action on jcodemunch-mcp's own PRs.
+# Posts a sticky PR comment with six-axis radar deltas vs the base branch.
+
+name: Health Radar
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  pull-requests: write
+  contents: read
+
+jobs:
+  radar:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Need enough history to checkout the base branch in the action.
+          fetch-depth: 0
+
+      - name: Run health-radar
+        uses: ./.github/actions/health-radar
+        with:
+          # Pin to the version we're shipping the action with so PRs
+          # don't accidentally regress against a never-released local
+          # change. Override per-PR if testing the action itself.
+          jcodemunch-version: '1.88.0'

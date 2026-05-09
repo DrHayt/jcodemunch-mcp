@@ -5612,6 +5612,20 @@ def main(argv: Optional[list[str]] = None):
         help="Run init refresh non-interactively",
     )
 
+    # --- health ---
+    health_parser = subparsers.add_parser(
+        "health",
+        help="Print get_repo_health JSON to stdout (includes six-axis radar). For CI / scripting.",
+    )
+    health_parser.add_argument("repo", nargs="?", default=".",
+        help="Repo identifier (path, owner/name, or bare display name). Defaults to '.' (cwd).")
+    health_parser.add_argument("--days", type=int, default=90,
+        help="Churn look-back window in days (default 90).")
+    health_parser.add_argument("--radar-only", action="store_true",
+        help="Emit only the `radar` sub-field instead of the full health response.")
+    health_parser.add_argument("--storage-path", default=None,
+        help="Override index storage location.")
+
     # --- digest ---
     digest_parser = subparsers.add_parser(
         "digest",
@@ -5809,7 +5823,7 @@ def main(argv: Optional[list[str]] = None):
     if any(arg in top_level_flags for arg in raw_argv):
         args = parser.parse_args(raw_argv)
     else:
-        known_commands = {"serve", "watch", "hook-event", "hook-pretooluse", "hook-posttooluse", "hook-copilot-posttooluse", "hook-precompact", "hook-taskcomplete", "hook-subagent-start", "watch-claude", "watch-all", "watch-install", "watch-uninstall", "watch-status", "config", "index", "index-file", "claude-md", "init", "install-pack", "download-model", "upgrade", "whatsnew", "receipt", "digest"}
+        known_commands = {"serve", "watch", "hook-event", "hook-pretooluse", "hook-posttooluse", "hook-copilot-posttooluse", "hook-precompact", "hook-taskcomplete", "hook-subagent-start", "watch-claude", "watch-all", "watch-install", "watch-uninstall", "watch-status", "config", "index", "index-file", "claude-md", "init", "install-pack", "download-model", "upgrade", "whatsnew", "receipt", "digest", "health"}
         has_subcommand = any(arg in known_commands for arg in raw_argv if not arg.startswith("-"))
         if not has_subcommand:
             raw_argv = ["serve"] + list(raw_argv)
@@ -5887,6 +5901,15 @@ def main(argv: Optional[list[str]] = None):
             "--repo-root", args.repo_root,
             "--max-entries", str(args.max_entries),
         ]))
+
+    if args.command == "health":
+        from .cli.health import main as health_main
+        argv = [args.repo, "--days", str(args.days)]
+        if args.radar_only:
+            argv += ["--radar-only"]
+        if args.storage_path:
+            argv += ["--storage-path", args.storage_path]
+        sys.exit(health_main(argv))
 
     if args.command == "digest":
         from .cli.digest import main as digest_main
