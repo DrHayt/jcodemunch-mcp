@@ -132,6 +132,11 @@ class TestProductionPathFilter:
         "lib/utils.py",
         "src/tools/test_summarizer.py",  # tool file with "test_" prefix — keep
         "vscode-extension/src/extension.ts",
+        # Filename-suffix near-misses that should NOT be filtered:
+        "pkg/foo/protest.go",            # contains "test" but no _test.go suffix
+        "src/manifest.ts",               # no .spec/.test infix
+        "src/Foo.java",                  # no Test suffix
+        "src/foo_specifications.rb",     # _spec is part of word, not the suffix
     ])
     def test_production_paths_kept(self, path):
         assert _is_production_path(path) is True
@@ -144,6 +149,19 @@ class TestProductionPathFilter:
         "examples/demo.py",
         "src/foo/tests/test_bar.py",  # nested tests dir
         "tests\\test_foo.py",          # windows separators
+        # v1.92.0: filename-suffix conventions across ecosystems.
+        "pkg/foo/foo_test.go",                 # Go
+        "src/app/foo.service.spec.ts",         # Angular/NestJS
+        "src/app/foo.service.spec.tsx",        # TSX spec
+        "src/app/foo.test.ts",                 # Jest TS
+        "src/app/foo.test.tsx",                # Jest TSX
+        "src/app/foo.test.js",                 # Jest JS
+        "src/app/foo.test.jsx",                # Jest JSX
+        "src/app/foo.spec.js",                 # Jasmine/Karma JS
+        "src/app/foo.spec.jsx",                # Jasmine/Karma JSX
+        "spec/models/user_spec.rb",            # RSpec
+        "src/com/example/FooTest.java",        # JUnit
+        "src/app/Foo.SPEC.TS",                 # case-insensitive
     ])
     def test_non_production_paths_excluded(self, path):
         assert _is_production_path(path) is False

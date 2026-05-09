@@ -15,6 +15,7 @@ tools — no logic is duplicated here.
 
 from __future__ import annotations
 
+import re
 import time
 from typing import Optional
 
@@ -48,11 +49,30 @@ _NON_PRODUCTION_DIR_NAMES = frozenset({
     "tests", "test", "benchmarks", "examples", "scripts",
 })
 
+# Filename suffixes for ecosystems that co-locate tests with source rather
+# than placing them under a tests/ directory:
+#   Go:        foo_test.go
+#   Jest:      foo.test.{js,jsx,ts,tsx}
+#   Jasmine/Karma/Angular/NestJS:  foo.spec.{js,jsx,ts,tsx}
+#   RSpec:     foo_spec.rb
+#   JUnit:     FooTest.java
+# Inline conventions like Rust's #[cfg(test)] mod tests cannot be detected
+# by path alone and are out of scope — would need an AST-aware approach.
+_NON_PRODUCTION_FILENAME_RE = re.compile(
+    r"(?:_test\.go|\.(?:test|spec)\.[jt]sx?|_spec\.rb|Test\.java)$",
+    re.IGNORECASE,
+)
+
 
 def _is_production_path(path: str) -> bool:
-    """True when no path component is a non-production directory name."""
+    """True when the path is neither under a non-production directory nor
+    a test-suffix file. See module-level constants for the exact rules."""
     norm = path.replace("\\", "/")
-    return not any(p in _NON_PRODUCTION_DIR_NAMES for p in norm.split("/"))
+    if any(p in _NON_PRODUCTION_DIR_NAMES for p in norm.split("/")):
+        return False
+    if _NON_PRODUCTION_FILENAME_RE.search(norm):
+        return False
+    return True
 
 
 def _count_unstable_modules(index) -> tuple[int, int]:
