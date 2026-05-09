@@ -1,6 +1,12 @@
 """Tests for get_repo_health tool."""
 
-from jcodemunch_mcp.tools.get_repo_health import get_repo_health
+import pytest
+
+from jcodemunch_mcp.tools.get_repo_health import (
+    _count_unstable_modules,
+    _is_production_path,
+    get_repo_health,
+)
 from jcodemunch_mcp.tools.index_folder import index_folder
 
 
@@ -111,3 +117,77 @@ class TestGetRepoHealth:
         result = get_repo_health(repo=r["repo"], storage_path=str(store))
         assert "error" not in result, result
         assert "summary" in result
+
+
+class TestProductionPathFilter:
+    """v1.91.0: coupling axis excludes tests/benchmarks/scripts/examples
+    from both numerator and denominator. Test files are guaranteed to look
+    unstable (Ca=0) and would dominate the metric for any well-tested
+    project — counting them confused the axis into reporting "coupling=4"
+    on otherwise-healthy codebases."""
+
+    @pytest.mark.parametrize("path", [
+        "src/foo/bar.py",
+        "jcodemunch_mcp/tools/get_repo_health.py",
+        "lib/utils.py",
+        "src/tools/test_summarizer.py",  # tool file with "test_" prefix — keep
+        "vscode-extension/src/extension.ts",
+    ])
+    def test_production_paths_kept(self, path):
+        assert _is_production_path(path) is True
+
+    @pytest.mark.parametrize("path", [
+        "tests/test_foo.py",
+        "test/conftest.py",
+        "benchmarks/harness/run.py",
+        "scripts/migrate.py",
+        "examples/demo.py",
+        "src/foo/tests/test_bar.py",  # nested tests dir
+        "tests\\test_foo.py",          # windows separators
+    ])
+    def test_non_production_paths_excluded(self, path):
+        assert _is_production_path(path) is False
+
+
+class TestCountUnstableModules:
+    """Regression: v1.90.x counted test files as unstable, dominating the
+    coupling axis. v1.91.0 returns (unstable, production_total) and excludes
+    leaf-script directories from both."""
+
+    def _index_with_layout(self, tmp_path, files: dict[str, str]):
+        src = tmp_path / "src"
+        src.mkdir()
+        store = tmp_path / "store"
+        store.mkdir()
+        for rel, content in files.items():
+            f = src / rel
+            f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(content)
+        r = index_folder(str(src), use_ai_summaries=False, storage_path=str(store))
+        assert r["success"] is True
+        from jcodemunch_mcp.storage import IndexStore
+        owner, name = r["repo"].split("/", 1)
+        return IndexStore(base_path=str(store)).load_index(owner, name)
+
+    def test_excludes_tests_from_both_numerator_and_denominator(self, tmp_path):
+        # Layout: 1 production file (lib.py, imported by main.py),
+        # 1 production entrypoint (main.py, no inbound), 3 test files
+        # (each imports lib, no inbound). Pre-fix: 4 unstable / 5 total.
+        # Post-fix: 1 unstable / 2 production_total.
+        idx = self._index_with_layout(tmp_path, {
+            "lib.py":              "def helper(): return 1\n",
+            "main.py":             "from lib import helper\nhelper()\n",
+            "tests/test_a.py":     "from lib import helper\ndef test_a(): assert helper()\n",
+            "tests/test_b.py":     "from lib import helper\ndef test_b(): assert helper()\n",
+            "tests/test_c.py":     "from lib import helper\ndef test_c(): assert helper()\n",
+        })
+        unstable, production_total = _count_unstable_modules(idx)
+        assert production_total == 2, f"expected 2 production files, got {production_total}"
+        # main.py has Ca=0, Ce=1 → instability=1.0 → unstable. lib.py has
+        # Ca>=1 (main + tests credit it), Ce=0 → stable.
+        assert unstable == 1, f"expected 1 unstable production file, got {unstable}"
+
+    def test_returns_pair_for_empty_index(self, tmp_path):
+        from types import SimpleNamespace
+        empty = SimpleNamespace(imports=[], source_files=[])
+        assert _count_unstable_modules(empty) == (0, 0)
