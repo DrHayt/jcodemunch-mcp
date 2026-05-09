@@ -37,28 +37,57 @@ def _avg_complexity(index) -> float:
     return round(sum(values) / len(values), 2) if values else 0.0
 
 
-def _count_unstable_modules(index) -> int:
-    """Count files with instability > 0.7 (Ce-dominated)."""
+# Directory names that hold non-production code: tests, benchmarks, scripts,
+# examples. Files in these directories have Ca=0 by construction (pytest
+# collects tests, benchmarks/scripts run from the shell, examples are
+# illustrative) so they trivially meet the instability > 0.7 threshold and
+# would otherwise dominate the coupling axis for any well-tested project.
+# Exclusion applies to both the iteration AND the denominator — see
+# _count_unstable_modules below.
+_NON_PRODUCTION_DIR_NAMES = frozenset({
+    "tests", "test", "benchmarks", "examples", "scripts",
+})
+
+
+def _is_production_path(path: str) -> bool:
+    """True when no path component is a non-production directory name."""
+    norm = path.replace("\\", "/")
+    return not any(p in _NON_PRODUCTION_DIR_NAMES for p in norm.split("/"))
+
+
+def _count_unstable_modules(index) -> tuple[int, int]:
+    """Return ``(unstable_count, production_total)``.
+
+    Counts files with instability > 0.7 (Ce-dominated) among production
+    code only — tests, benchmarks, scripts, and examples are excluded
+    from both the numerator AND the denominator. Including them would
+    structurally penalize any project with a real test suite.
+
+    Inbound references *from* test files still count toward production
+    files' Ca (so well-tested code looks more stable, which is correct).
+    """
     if not index.imports:
-        return 0
+        return 0, 0
     source_files = frozenset(index.source_files)
     alias_map = getattr(index, "alias_map", None)
     fwd = _build_adjacency(index.imports, source_files, alias_map, getattr(index, "psr4_map", None))
 
-    # Build reverse (importers per file)
+    # Build reverse (importers per file). The graph still includes test
+    # imports — they credit production Ca and that's the correct shape.
     rev: dict[str, list] = {}
     for src, targets in fwd.items():
         for tgt in targets:
             rev.setdefault(tgt, []).append(src)
 
+    production_files = [f for f in index.source_files if _is_production_path(f)]
     unstable = 0
-    for f in index.source_files:
+    for f in production_files:
         ca = len(rev.get(f, []))
         ce = len(fwd.get(f, []))
         total = ca + ce
         if total > 0 and (ce / total) > 0.7:
             unstable += 1
-    return unstable
+    return unstable, len(production_files)
 
 
 def get_repo_health(
@@ -125,8 +154,10 @@ def get_repo_health(
     cycle_count = len(cycles)
     cycles_sample = cycles[:3]  # Show first 3 examples
 
-    # Unstable modules
-    unstable_count = _count_unstable_modules(index)
+    # Unstable modules — `coupling_total` excludes tests/benchmarks/scripts
+    # and is the correct denominator for the coupling axis. `total_files`
+    # in the response stays as the unfiltered count.
+    unstable_count, coupling_total = _count_unstable_modules(index)
 
     # Build a human-readable summary line
     health_issues: list[str] = []
@@ -177,7 +208,7 @@ def get_repo_health(
         dead_code_pct=dead_code_pct,
         cycle_count=cycle_count,
         unstable_modules=unstable_count,
-        total_files=total_files,
+        total_files=coupling_total,  # production-code denominator
         untested_pct=untested_pct,
         top_hotspot_score=top_hotspot_score,
     )

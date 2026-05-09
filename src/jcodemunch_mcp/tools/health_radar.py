@@ -131,8 +131,14 @@ def compute_radar(
         avg_complexity: Mean cyclomatic complexity across functions/methods.
         dead_code_pct: Percentage of functions/methods classified as dead.
         cycle_count: Number of dependency cycles in the import graph.
-        unstable_modules: Count of files with instability > 0.7.
-        total_files: Total source-file count in the repo.
+        unstable_modules: Count of production files with instability > 0.7.
+            Callers should exclude tests/benchmarks/scripts/examples — those
+            files are guaranteed to look unstable (Ca=0) and would dominate
+            the metric for any well-tested project.
+        total_files: Denominator for the coupling axis. Should match the
+            scope of `unstable_modules` (i.e. production-only count, same
+            exclusions). `get_repo_health` derives both from
+            `_count_unstable_modules`, which returns them as a pair.
         untested_pct: Percentage of functions/methods with no test reachability.
             None => the test_gap axis returns score=None (axis omitted from
             composite). Most callers will pass 100.0 - reached_pct.

@@ -2,6 +2,44 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.91.0] — 2026-05-09 — coupling axis: exclude tests/benchmarks/scripts from the metric
+
+The coupling axis was structurally biased against well-tested
+projects. Tests, benchmark scripts, and example/script files have
+`Ca=0` by construction (pytest collects tests, benchmarks run from
+the shell, examples are illustrative) so they trivially meet the
+instability > 0.7 threshold. In jcm itself, this caused **204 of
+424 files** to register as "unstable" — but 200+ of those were
+just test files. The coupling score ended up at **3.8/100** when
+the production code's actual unstable share was **~2%**.
+
+This release filters non-production directories from both the
+numerator AND the denominator of the coupling computation. Inbound
+references *from* test files still credit production Ca (so
+well-tested code looks more stable, which is correct). The peer
+repos in the observatory (Django, Flask, FastAPI, NestJS) all
+benefit from the same fix.
+
+### Changed
+- `_count_unstable_modules` now returns `(unstable_count, production_total)`.
+  Excluded directory names: `tests`, `test`, `benchmarks`, `examples`,
+  `scripts` (matched at any path component).
+- `compute_radar`'s `total_files` parameter docstring clarifies it's
+  the coupling-axis denominator, not the repo total. The repo total
+  in the response object is unchanged.
+- Observatory scores will recompute on the next weekly run; expect
+  most repos to move from C → B as the artificial test-driven
+  penalty disappears.
+
+### Added
+- `_is_production_path` helper exported from `tools/get_repo_health.py`
+  for downstream tools that want the same filter.
+- `scripts/unstable_modules_diag.py` — dev diagnostic that prints the
+  raw + production-filtered unstable views side by side. Use to
+  confirm whether a low coupling score reflects real architectural
+  coupling or test-suite dominance.
+- 14 new tests covering the path filter and the new return signature.
+
 ## [1.90.1] — 2026-05-09 — observatory: fix repo identifier in health call
 
 Patch release. The 1.90.0 observatory pipeline passed the cloned

@@ -95,9 +95,9 @@ is a byte the agent doesn't pay to read.
 <!-- WHATSNEW:START -->
 #### What's new
 
+- **[v1.91.0](https://github.com/jgravelle/jcodemunch-mcp/releases/tag/v1.91.0)** (2026-05-09) — coupling axis: exclude tests/benchmarks/scripts from the metric
 - **[v1.90.1](https://github.com/jgravelle/jcodemunch-mcp/releases/tag/v1.90.1)** (2026-05-09) — observatory: fix repo identifier in health call
 - **[v1.90.0](https://github.com/jgravelle/jcodemunch-mcp/releases/tag/v1.90.0)** (2026-05-09) — OSS code-health observatory pipeline
-- **[v1.89.0](https://github.com/jgravelle/jcodemunch-mcp/releases/tag/v1.89.0)** (2026-05-09) — VS Code risk-density gutter
 <!-- WHATSNEW:END -->
 
 ![License](https://img.shields.io/badge/license-dual--use-blue)
