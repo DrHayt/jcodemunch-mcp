@@ -76,6 +76,8 @@ _CANONICAL_TOOL_NAMES: tuple[str, ...] = (
     "audit_agent_config", "get_watch_status", "analyze_perf", "tune_weights", "check_embedding_drift",
     # Agent stand-up briefing
     "digest",
+    # Health-radar diff (PR-time diff-grade reports)
+    "diff_health_radar",
     # Runtime tier switching
     "set_tool_tier", "announce_model",
     # Composite retrieval
@@ -125,6 +127,8 @@ _TOOL_TIER_STANDARD: frozenset[str] = _TOOL_TIER_CORE | frozenset({
     "invalidate_cache", "get_watch_status", "analyze_perf", "tune_weights", "check_embedding_drift",
     # Agent stand-up briefing
     "digest",
+    # Health-radar diff
+    "diff_health_radar",
 })
 
 # full = everything (no filter applied)
@@ -1393,6 +1397,32 @@ def _build_tools_list() -> list[Tool]:
                         "description": "Include dead-end searches (negative evidence) in snapshot.",
                     },
                 },
+            },
+        ),
+        Tool(
+            name="diff_health_radar",
+            description=(
+                "Compare two health-radar payloads (from get_repo_health.radar) "
+                "and return axis-by-axis deltas, composite delta, grade movement, "
+                "and a one-line verdict. Pure data transform — no index access, "
+                "no I/O. Designed for PR-time diff-grade reports: run "
+                "get_repo_health on the base branch, run it on the PR branch, "
+                "pass both radar payloads here. Returns regressions/improvements "
+                "lists for axes that moved more than 3 points."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "baseline": {
+                        "type": "object",
+                        "description": "Radar payload from baseline (e.g. base branch). The `radar` field of a get_repo_health response.",
+                    },
+                    "current": {
+                        "type": "object",
+                        "description": "Radar payload from current (e.g. PR branch). The `radar` field of a get_repo_health response.",
+                    },
+                },
+                "required": ["baseline", "current"],
             },
         ),
         Tool(
@@ -3415,6 +3445,15 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                     storage_path=storage_path,
                 )
             )
+        elif name == "diff_health_radar":
+            from .tools.health_radar import diff_health_radar
+            result = await asyncio.to_thread(
+                functools.partial(
+                    diff_health_radar,
+                    baseline=arguments["baseline"],
+                    current=arguments["current"],
+                )
+            )
         elif name == "digest":
             from .tools.digest import compose_digest
             result = await asyncio.to_thread(
@@ -4700,7 +4739,8 @@ def _generate_claude_md_snippet(missing_only: bool = False) -> str:
                           "get_signal_chains", "render_diagram",
                           "get_project_intel"]),
         ("Quality & Metrics", ["get_symbol_complexity", "get_churn_rate", "get_hotspots",
-                                "get_repo_health", "get_symbol_importance",
+                                "get_repo_health", "diff_health_radar",
+                                "get_symbol_importance",
                                 "find_dead_code", "get_dead_code_v2",
                                 "get_untested_symbols", "search_ast",
                                 "winnow_symbols"]),

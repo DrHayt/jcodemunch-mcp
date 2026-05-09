@@ -146,6 +146,42 @@ def get_repo_health(
     else:
         summary = "Issues found: " + "; ".join(health_issues) + "."
 
+    # Six-axis radar (todo.md item #5). Test-gap and churn-surface inputs
+    # are best-effort — failures degrade gracefully and the relevant axis
+    # is omitted from the radar's composite.
+    untested_pct: Optional[float] = None
+    try:
+        from .get_untested_symbols import get_untested_symbols
+        untested = get_untested_symbols(
+            repo=f"{owner}/{name}",
+            min_confidence=0.5,
+            max_results=1,  # we only need the count
+            storage_path=storage_path,
+        )
+        if "error" not in untested:
+            reached_pct = float(untested.get("reached_pct", 0))
+            untested_pct = max(0.0, 100.0 - reached_pct)
+    except Exception:
+        pass
+
+    top_hotspot_score: Optional[float] = None
+    if top_hotspots:
+        try:
+            top_hotspot_score = float(top_hotspots[0].get("hotspot_score", 0))
+        except (TypeError, ValueError):
+            top_hotspot_score = None
+
+    from .health_radar import compute_radar
+    radar = compute_radar(
+        avg_complexity=avg_complexity,
+        dead_code_pct=dead_code_pct,
+        cycle_count=cycle_count,
+        unstable_modules=unstable_count,
+        total_files=total_files,
+        untested_pct=untested_pct,
+        top_hotspot_score=top_hotspot_score,
+    )
+
     elapsed = (time.perf_counter() - t0) * 1000
     return {
         "repo": f"{owner}/{name}",
@@ -160,6 +196,7 @@ def get_repo_health(
         "cycles_sample": cycles_sample,
         "unstable_modules": unstable_count,
         "top_hotspots": top_hotspots,
+        "radar": radar,
         "_meta": {
             "timing_ms": round(elapsed, 1),
             "days": days,

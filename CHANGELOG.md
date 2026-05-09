@@ -2,6 +2,50 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.87.0] — 2026-05-09 — Six-axis health radar + diff helper
+
+todo.md item #5 (foundational layer). New radar field on
+`get_repo_health` + new `diff_health_radar` MCP tool. The PR-time
+GitHub Action that turns this into auto-comments ships in a follow-up
+release once the radar shape settles.
+
+### Added
+- **Six-axis radar on `get_repo_health` responses.** Each axis
+  produces a 0–100 score (higher = healthier); composite is the
+  arithmetic mean; letter grade A/B/C/D/F follows by 10-point bands:
+  - `complexity` — penalises high mean cyclomatic complexity.
+  - `dead_code` — penalises high `dead_code_pct`.
+  - `cycles` — penalises dependency-cycle count.
+  - `coupling` — penalises high `unstable_modules / total_files` ratio.
+  - `test_gap` — penalises low test reachability (`get_untested_symbols`).
+  - `churn_surface` — bucketed penalty on top-1 hotspot score.
+  Test-gap and churn axes degrade gracefully if their underlying
+  tools error — the axis is omitted from the composite (listed in
+  `radar.omitted_axes`) rather than zero-scored.
+- **`diff_health_radar` MCP tool.** Pure data transform: takes two
+  radar payloads (e.g. base branch radar + PR branch radar) and
+  returns axis-by-axis deltas, composite delta, grade movement, and
+  a one-line verdict. `regressions` / `improvements` lists capture
+  axes that moved more than 3 points (small fluctuations are noise).
+  Designed for PR-time diff-grade reporting in CI.
+
+### Methodology
+- Penalties are linear and conservative — calibration tuned so a
+  typical "average" codebase lands around C, not B+. Scoring formulas
+  are in `tools/health_radar.py:_score_*` and intentionally simple
+  enough to read in 30 seconds. PR an updated formula if you have
+  better calibration data.
+- The radar is built from existing tools (no new heavy work):
+  `get_repo_health` already aggregates the inputs;
+  `get_untested_symbols` provides reach-pct; the radar layer just
+  normalises and fuses.
+
+### Coming in v1.88.0
+- GitHub Action scaffold that runs `get_repo_health` on the PR base
+  + branch and posts the diff as a sticky PR comment. Out of scope
+  for v1.87 so the radar shape can settle before the comment format
+  freezes.
+
 ## [1.86.0] — 2026-05-09 — `digest` agent stand-up briefing
 
 todo.md item #4. New tool surface; agent-facing.
