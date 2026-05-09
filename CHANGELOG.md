@@ -2,6 +2,58 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.90.0] — 2026-05-09 — OSS code-health observatory pipeline
+
+todo.md item #7. New `observatory` CLI subcommand that runs an
+end-to-end pipeline producing **static HTML + JSON + RSS artifacts**
+for a curated list of OSS repos. Hosting deliberately decoupled —
+the output is plain static files that can serve from any host (Mac
+Mini Caddy, GitHub Pages, S3, fly.io static, Cloudflare Pages,
+whatever wins).
+
+### Added
+- **`jcodemunch-mcp observatory init`** writes a starter config with
+  a 5-repo launch list (Express, FastAPI, Gin, Pydantic, jcodemunch
+  self-audit). Edit and ship.
+- **`jcodemunch-mcp observatory build --config <file>`** runs the
+  full pipeline:
+  1. Clone-or-update each repo (shallow `--depth=1`)
+  2. Index it via `index_folder`
+  3. Run `get_repo_health` to capture the six-axis radar
+  4. Append a record to `<output>/<slug>/history.json` (newest-first,
+     capped at 52 entries — a year of weekly runs; same-SHA re-runs
+     are no-ops)
+  5. Render `<output>/<slug>/index.html` — a per-repo landing page
+     with current radar, composite trend sparkline, and 12-run
+     history table
+  6. Render `<output>/<slug>/feed.xml` — per-repo RSS feed
+  7. Render `<output>/index.html` — leaderboard sorted by composite,
+     with per-repo sparklines
+  8. Render `<output>/index.json` — machine-readable leaderboard
+  9. Render `<output>/feed.xml` — cross-repo RSS feed
+- **Pure static-site output** — no JS framework, no runtime CSS
+  fetch, no server-side rendering. Plain HTML + inline SVG + minimal
+  CSS that works behind any CDN.
+
+### Why this beats sverklo's leaderboard structurally
+A static page ages. An observatory pipeline **compounds** — every
+weekly run produces fresh, dated, indexable content. Six months
+out, `<host>/owner--repo/index.html` is the canonical "is this repo
+getting healthier or worse?" answer on the open web.
+
+### Hosting decision still pending
+The pipeline ships independent of where it lives. Once the host is
+chosen, deployment is "rsync `output_dir` somewhere and point a
+domain at it." Likely candidates: Caddy on the Mac Mini (per
+existing federation), GitHub Pages from a `gh-pages` branch, or a
+fly.io static deploy. Tracked in `todo.md` item #7's notes.
+
+### Sample workflow (cron)
+```bash
+# weekly
+0 6 * * 1 cd /path/to/repo && jcodemunch-mcp observatory build --config observatory.config.json
+```
+
 ## [1.89.0] — 2026-05-09 — VS Code risk-density gutter
 
 todo.md item #6. Server-side `get_file_risk` tool + `file-risk` CLI +

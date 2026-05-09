@@ -5653,6 +5653,20 @@ def main(argv: Optional[list[str]] = None):
         help="Run init refresh non-interactively",
     )
 
+    # --- observatory ---
+    obs_parser = subparsers.add_parser(
+        "observatory",
+        help="Run the public OSS code-health observatory pipeline (static-site output).",
+    )
+    obs_sub = obs_parser.add_subparsers(dest="obs_action")
+    obs_build = obs_sub.add_parser("build", help="Run the full pipeline against a config file.")
+    obs_build.add_argument("--config", required=True, help="Path to the observatory config JSON.")
+    obs_build.add_argument("--output-dir", default=None, help="Override config's output_dir.")
+    obs_build.add_argument("--workdir", default=None, help="Override config's workdir.")
+    obs_init = obs_sub.add_parser("init", help="Write a starter config file.")
+    obs_init.add_argument("--out", default="observatory.config.json",
+        help="Where to write the starter config.")
+
     # --- file-risk ---
     file_risk_parser = subparsers.add_parser(
         "file-risk",
@@ -5876,7 +5890,7 @@ def main(argv: Optional[list[str]] = None):
     if any(arg in top_level_flags for arg in raw_argv):
         args = parser.parse_args(raw_argv)
     else:
-        known_commands = {"serve", "watch", "hook-event", "hook-pretooluse", "hook-posttooluse", "hook-copilot-posttooluse", "hook-precompact", "hook-taskcomplete", "hook-subagent-start", "watch-claude", "watch-all", "watch-install", "watch-uninstall", "watch-status", "config", "index", "index-file", "claude-md", "init", "install-pack", "download-model", "upgrade", "whatsnew", "receipt", "digest", "health", "file-risk"}
+        known_commands = {"serve", "watch", "hook-event", "hook-pretooluse", "hook-posttooluse", "hook-copilot-posttooluse", "hook-precompact", "hook-taskcomplete", "hook-subagent-start", "watch-claude", "watch-all", "watch-install", "watch-uninstall", "watch-status", "config", "index", "index-file", "claude-md", "init", "install-pack", "download-model", "upgrade", "whatsnew", "receipt", "digest", "health", "file-risk", "observatory"}
         has_subcommand = any(arg in known_commands for arg in raw_argv if not arg.startswith("-"))
         if not has_subcommand:
             raw_argv = ["serve"] + list(raw_argv)
@@ -5954,6 +5968,21 @@ def main(argv: Optional[list[str]] = None):
             "--repo-root", args.repo_root,
             "--max-entries", str(args.max_entries),
         ]))
+
+    if args.command == "observatory":
+        from .cli.observatory import main as observatory_main
+        argv = []
+        if args.obs_action == "build":
+            argv = ["build", "--config", args.config]
+            if args.output_dir:
+                argv += ["--output-dir", args.output_dir]
+            if args.workdir:
+                argv += ["--workdir", args.workdir]
+        elif args.obs_action == "init":
+            argv = ["init", "--out", args.out]
+        else:
+            argv = []
+        sys.exit(observatory_main(argv))
 
     if args.command == "file-risk":
         from .cli.file_risk import main as file_risk_main
