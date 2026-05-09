@@ -9,23 +9,6 @@ A crapload of detailed info: http://jcodemunch.com/
 
 ---
 
-## Documentation
-
-| Doc | What it covers |
-|-----|----------------|
-| [QUICKSTART.md](QUICKSTART.md) | Zero-to-indexed in three steps |
-| [USER_GUIDE.md](USER_GUIDE.md) | Full tool reference, workflows, and best practices |
-| [AGENT_HOOKS.md](AGENT_HOOKS.md) | Agent hooks and prompt policies |
-| [CONFIGURATION.md](CONFIGURATION.md) | JSONC config file reference, migration from env vars |
-| [GROQ.md](GROQ.md) | Groq Remote MCP integration, deployment, gcm CLI |
-| [HEADLESS.md](HEADLESS.md) | Using jCodeMunch with `claude -p` (and the jragmunch CLI) |
-| [ARCHITECTURE.md](ARCHITECTURE.md) | Internal design, storage model, and extension points |
-| [LANGUAGE_SUPPORT.md](LANGUAGE_SUPPORT.md) | Supported languages and parsing details |
-| [CONTEXT_PROVIDERS.md](CONTEXT_PROVIDERS.md) | dbt, Git, and custom context provider docs |
-| [TROUBLESHOOTING.md](TROUBLESHOOTING.md) | Common issues and fixes |
-
----
-
 ## Cut code-reading token usage by **95% or more**
 
 Most AI agents explore repositories the expensive way:
@@ -50,6 +33,22 @@ Index once. Query cheaply. Keep moving.
 
 ---
 
+## Documentation
+
+| Doc | What it covers |
+|-----|----------------|
+| [QUICKSTART.md](QUICKSTART.md) | Zero-to-indexed in three steps |
+| [USER_GUIDE.md](USER_GUIDE.md) | Full tool reference, workflows, and best practices |
+| [AGENT_HOOKS.md](AGENT_HOOKS.md) | Agent hooks and prompt policies |
+| [CONFIGURATION.md](CONFIGURATION.md) | JSONC config file reference, migration from env vars |
+| [GROQ.md](GROQ.md) | Groq Remote MCP integration, deployment, gcm CLI |
+| [HEADLESS.md](HEADLESS.md) | Using jCodeMunch with `claude -p` (and the jragmunch CLI) |
+| [ARCHITECTURE.md](ARCHITECTURE.md) | Internal design, storage model, and extension points |
+| [LANGUAGE_SUPPORT.md](LANGUAGE_SUPPORT.md) | Supported languages and parsing details |
+| [CONTEXT_PROVIDERS.md](CONTEXT_PROVIDERS.md) | dbt, Git, and custom context provider docs |
+| [TROUBLESHOOTING.md](TROUBLESHOOTING.md) | Common issues and fixes |
+
+---
 ## Compact output — the second token axis (MUNCH)
 
 Retrieval decides **what** to send. MUNCH decides **how to pack it**.
