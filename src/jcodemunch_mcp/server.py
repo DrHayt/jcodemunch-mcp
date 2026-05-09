@@ -5519,8 +5519,8 @@ def main(argv: Optional[list[str]] = None):
     )
     receipt_parser.add_argument("--days", type=int, default=30,
         help="Window size in days (default 30; use 0 for all-time).")
-    receipt_parser.add_argument("--model", choices=["sonnet", "opus", "haiku"], default="sonnet",
-        help="Model rate to apply for the dollar conversion (default sonnet).")
+    receipt_parser.add_argument("--model", choices=["sonnet", "opus", "haiku"], default="opus",
+        help="Model rate to apply for the dollar conversion (default opus).")
     receipt_parser.add_argument("--export", metavar="FILE.csv|FILE.json", default=None,
         help="Write raw per-tool data to a file instead of the human report.")
     receipt_parser.add_argument("--explain", action="store_true",

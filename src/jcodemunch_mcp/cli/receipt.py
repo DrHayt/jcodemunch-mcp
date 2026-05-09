@@ -99,14 +99,15 @@ _DEFAULT_MULTIPLIER = 8.0
 # typically 10% of normal input pricing for Anthropic models, but we use
 # normal input pricing here because savings are computed against a
 # counterfactual (naive Read+Grep would have been *fresh* input, not
-# cached). Sonnet is the default — middle of the road, defensible.
+# cached). Opus is the default — most jcodemunch users are running an
+# Opus-grade model where savings actually move a budget needle.
 _MODEL_PRICES_USD_PER_MTOK: dict[str, float] = {
     "sonnet": 3.0,    # Claude Sonnet 4.x
     "opus":   15.0,   # Claude Opus 4.x
     "haiku":  0.80,   # Claude Haiku 4.x
 }
 
-_DEFAULT_MODEL = "sonnet"
+_DEFAULT_MODEL = "opus"
 
 # Approximate bytes-per-token used to convert tool_result content
 # byte-length into a token estimate. Same heuristic the rest of the
@@ -393,7 +394,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         "--model",
         choices=sorted(_MODEL_PRICES_USD_PER_MTOK.keys()),
         default=_DEFAULT_MODEL,
-        help="Model rate to apply for the dollar conversion (default sonnet).",
+        help="Model rate to apply for the dollar conversion (default opus).",
     )
     parser.add_argument(
         "--export",

@@ -92,9 +92,9 @@ is a byte the agent doesn't pay to read.
 <!-- WHATSNEW:START -->
 #### What's new
 
+- **[v1.85.1](https://github.com/jgravelle/jcodemunch-mcp/releases/tag/v1.85.1)** (2026-05-09) — `receipt` defaults to Opus rate
 - **[v1.85.0](https://github.com/jgravelle/jcodemunch-mcp/releases/tag/v1.85.0)** (2026-05-09) — `receipt` token-economy ledger
 - **[v1.84.0](https://github.com/jgravelle/jcodemunch-mcp/releases/tag/v1.84.0)** (2026-05-09) — One-click install badges + auto-recency block + version-drift hint
-- **[v1.83.2](https://github.com/jgravelle/jcodemunch-mcp/releases/tag/v1.83.2)** (2026-05-08) — Docs: Codex CLI install workaround
 <!-- WHATSNEW:END -->
 
 ![License](https://img.shields.io/badge/license-dual--use-blue)

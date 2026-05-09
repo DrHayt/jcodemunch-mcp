@@ -2,6 +2,17 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.85.1] — 2026-05-09 — `receipt` defaults to Opus rate
+
+### Changed
+- **`jcodemunch-mcp receipt`** default `--model` flipped from `sonnet`
+  to `opus`. Most jcodemunch users running heavy retrieval workloads
+  are on an Opus-grade model — the headline number should reflect the
+  rate where savings actually move a budget needle. Sonnet and Haiku
+  remain available via `--model sonnet|haiku`, and both rates are
+  still surfaced inline below the headline regardless of which model
+  is chosen as the headline rate.
+
 ## [1.85.0] — 2026-05-09 — `receipt` token-economy ledger
 
 todo.md item #3. New CLI surface; no behaviour change to existing tools.
