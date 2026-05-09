@@ -161,15 +161,20 @@ def index_and_health(repo_path: Path, *, storage_path: Optional[str] = None) -> 
             use_ai_summaries=False,
             storage_path=storage_path,
         )
-        if idx_result.get("error"):
-            logger.warning("index failed for %s: %s", repo_path, idx_result["error"])
+        if idx_result.get("error") or not idx_result.get("success"):
+            logger.warning("index failed for %s: %s", repo_path, idx_result.get("error") or idx_result)
             return None
     except Exception:
         logger.exception("index_folder crashed on %s", repo_path)
         return None
 
+    repo_id = idx_result.get("repo")
+    if not repo_id or "/" not in repo_id:
+        logger.warning("index_folder returned no repo identifier for %s (got %r)", repo_path, repo_id)
+        return None
+
     try:
-        health = get_repo_health(repo=str(repo_path), storage_path=storage_path)
+        health = get_repo_health(repo=repo_id, storage_path=storage_path)
         if health.get("error"):
             logger.warning("get_repo_health error on %s: %s", repo_path, health["error"])
             return None

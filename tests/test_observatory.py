@@ -223,6 +223,50 @@ class TestRenderIndexPage:
         assert payload["summaries"][0]["slug"] == "a--a"
 
 
+class TestIndexAndHealth:
+    """Regression: get_repo_health must receive the indexed owner/name,
+    not the absolute filesystem checkout path. Pre-1.90.1 the orchestrator
+    passed str(repo_path), tripping the path-separator guard in
+    sqlite_store._safe_repo_component for every repo in CI."""
+
+    def test_passes_indexed_repo_id_not_path(self, tmp_path, monkeypatch):
+        captured = {}
+
+        def fake_index_folder(path, **kw):
+            captured["index_path"] = path
+            return {"success": True, "repo": "spf13/cobra"}
+
+        def fake_get_repo_health(repo, storage_path=None):
+            captured["health_repo"] = repo
+            return {"summary": "ok", "radar": {}}
+
+        monkeypatch.setattr(
+            "jcodemunch_mcp.tools.index_folder.index_folder",
+            fake_index_folder,
+        )
+        monkeypatch.setattr(
+            "jcodemunch_mcp.tools.get_repo_health.get_repo_health",
+            fake_get_repo_health,
+        )
+
+        repo_path = tmp_path / "checkouts" / "spf13--cobra"
+        repo_path.mkdir(parents=True)
+        result = obs.index_and_health(repo_path)
+
+        assert result is not None
+        assert captured["index_path"] == str(repo_path)
+        assert captured["health_repo"] == "spf13/cobra"
+        assert "/" not in captured["health_repo"].split("/", 1)[1]  # no path components
+
+    def test_returns_none_when_index_returns_no_repo_id(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(
+            "jcodemunch_mcp.tools.index_folder.index_folder",
+            lambda path, **kw: {"success": True},  # no "repo" key
+        )
+        result = obs.index_and_health(tmp_path)
+        assert result is None
+
+
 class TestLoadConfig:
     def test_minimal(self, tmp_path: Path):
         cfg_path = tmp_path / "obs.json"

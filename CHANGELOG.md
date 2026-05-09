@@ -2,6 +2,23 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.90.1] — 2026-05-09 — observatory: fix repo identifier in health call
+
+Patch release. The 1.90.0 observatory pipeline passed the cloned
+repo's absolute filesystem path to `get_repo_health(repo=...)`,
+which then tried to parse it as `owner/name` and tripped the path-
+separator guard in `sqlite_store._safe_repo_component`. Every repo
+in a CI run failed identically (`ValueError: Path separator in
+name: 'home/runner/work/...'`).
+
+### Fixed
+- `tools/observatory.py::index_and_health` now reads the indexed
+  identifier from `index_folder`'s response (`idx_result["repo"]`)
+  and passes that to `get_repo_health`, instead of stringifying the
+  checkout path.
+- Added regression tests covering the `repo=` argument passed to
+  `get_repo_health` and the missing-identifier guard.
+
 ## [1.90.0] — 2026-05-09 — OSS code-health observatory pipeline
 
 todo.md item #7. New `observatory` CLI subcommand that runs an
