@@ -92,9 +92,9 @@ is a byte the agent doesn't pay to read.
 <!-- WHATSNEW:START -->
 #### What's new
 
+- **[v1.86.0](https://github.com/jgravelle/jcodemunch-mcp/releases/tag/v1.86.0)** (2026-05-09) — `digest` agent stand-up briefing
 - **[v1.85.1](https://github.com/jgravelle/jcodemunch-mcp/releases/tag/v1.85.1)** (2026-05-09) — `receipt` defaults to Opus rate
 - **[v1.85.0](https://github.com/jgravelle/jcodemunch-mcp/releases/tag/v1.85.0)** (2026-05-09) — `receipt` token-economy ledger
-- **[v1.84.0](https://github.com/jgravelle/jcodemunch-mcp/releases/tag/v1.84.0)** (2026-05-09) — One-click install badges + auto-recency block + version-drift hint
 <!-- WHATSNEW:END -->
 
 ![License](https://img.shields.io/badge/license-dual--use-blue)

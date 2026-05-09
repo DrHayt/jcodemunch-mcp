@@ -74,6 +74,8 @@ _CANONICAL_TOOL_NAMES: tuple[str, ...] = (
     # Utilities
     "get_session_stats", "get_session_context", "get_session_snapshot", "plan_turn", "register_edit", "invalidate_cache", "test_summarizer",
     "audit_agent_config", "get_watch_status", "analyze_perf", "tune_weights", "check_embedding_drift",
+    # Agent stand-up briefing
+    "digest",
     # Runtime tier switching
     "set_tool_tier", "announce_model",
     # Composite retrieval
@@ -121,6 +123,8 @@ _TOOL_TIER_STANDARD: frozenset[str] = _TOOL_TIER_CORE | frozenset({
     "render_diagram", "get_project_intel",
     # Utilities
     "invalidate_cache", "get_watch_status", "analyze_perf", "tune_weights", "check_embedding_drift",
+    # Agent stand-up briefing
+    "digest",
 })
 
 # full = everything (no filter applied)
@@ -1389,6 +1393,49 @@ def _build_tools_list() -> list[Tool]:
                         "description": "Include dead-end searches (negative evidence) in snapshot.",
                     },
                 },
+            },
+        ),
+        Tool(
+            name="digest",
+            description=(
+                "Agent stand-up briefing for a repo. Returns a tight (~200 token) "
+                "markdown digest of (a) what changed since the agent's last session "
+                "(by tracking git HEAD between calls), (b) the current risk surface "
+                "(top hotspots by complexity × churn), and (c) dead-code candidates. "
+                "Each item references symbol_ids the agent can immediately query "
+                "with get_symbol_source / get_call_hierarchy / check_references. "
+                "Designed for session-start context injection: call once when you "
+                "open a repo, get oriented to the load-bearing changes without cold "
+                "exploration."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "repo": {
+                        "type": "string",
+                        "description": "Repo identifier (owner/name, full id, or bare display name).",
+                    },
+                    "since_sha": {
+                        "type": "string",
+                        "description": "Override the last-seen SHA (for re-running a delta).",
+                    },
+                    "max_changed_files": {
+                        "type": "integer",
+                        "default": 5,
+                        "description": "Cap on changed-files list (default 5).",
+                    },
+                    "max_hotspots": {
+                        "type": "integer",
+                        "default": 3,
+                        "description": "Cap on hotspot list (default 3).",
+                    },
+                    "max_dead_code": {
+                        "type": "integer",
+                        "default": 3,
+                        "description": "Cap on dead-code candidates (default 3).",
+                    },
+                },
+                "required": ["repo"],
             },
         ),
         Tool(
@@ -3368,6 +3415,19 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                     storage_path=storage_path,
                 )
             )
+        elif name == "digest":
+            from .tools.digest import compose_digest
+            result = await asyncio.to_thread(
+                functools.partial(
+                    compose_digest,
+                    repo=arguments["repo"],
+                    since_sha=arguments.get("since_sha"),
+                    max_changed_files=arguments.get("max_changed_files", 5),
+                    max_hotspots=arguments.get("max_hotspots", 3),
+                    max_dead_code=arguments.get("max_dead_code", 3),
+                    storage_path=storage_path,
+                )
+            )
         elif name == "plan_turn":
             from .tools.plan_turn import plan_turn
             # Extract model for tier-switch piggyback before passing to plan_turn
@@ -4645,7 +4705,7 @@ def _generate_claude_md_snippet(missing_only: bool = False) -> str:
                                 "get_untested_symbols", "search_ast",
                                 "winnow_symbols"]),
         ("Diffs & Embeddings", ["get_symbol_diff", "embed_repo"]),
-        ("Session-Aware Routing", ["plan_turn", "get_session_context", "get_session_snapshot", "register_edit"]),
+        ("Session-Aware Routing", ["plan_turn", "get_session_context", "get_session_snapshot", "register_edit", "digest"]),
         ("Utilities", ["get_session_stats", "analyze_perf", "tune_weights", "check_embedding_drift",
                         "invalidate_cache", "test_summarizer",
                         "audit_agent_config", "get_watch_status"]),
@@ -5512,6 +5572,26 @@ def main(argv: Optional[list[str]] = None):
         help="Run init refresh non-interactively",
     )
 
+    # --- digest ---
+    digest_parser = subparsers.add_parser(
+        "digest",
+        help="Agent stand-up briefing — since-last-session delta + risk surface + dead-code candidates",
+    )
+    digest_parser.add_argument("repo", nargs="?", default=".",
+        help="Repo identifier (path, owner/name, or bare display name). Defaults to '.' (cwd).")
+    digest_parser.add_argument("--since-sha", default=None,
+        help="Override the last-seen SHA (for re-running a delta).")
+    digest_parser.add_argument("--max-changed-files", type=int, default=5,
+        help="Cap on changed-files list (default 5).")
+    digest_parser.add_argument("--max-hotspots", type=int, default=3,
+        help="Cap on hotspot list (default 3).")
+    digest_parser.add_argument("--max-dead-code", type=int, default=3,
+        help="Cap on dead-code candidates (default 3).")
+    digest_parser.add_argument("--json", action="store_true",
+        help="Emit the structured payload as JSON instead of markdown.")
+    digest_parser.add_argument("--storage-path", default=None,
+        help="Override index storage location.")
+
     # --- receipt ---
     receipt_parser = subparsers.add_parser(
         "receipt",
@@ -5689,7 +5769,7 @@ def main(argv: Optional[list[str]] = None):
     if any(arg in top_level_flags for arg in raw_argv):
         args = parser.parse_args(raw_argv)
     else:
-        known_commands = {"serve", "watch", "hook-event", "hook-pretooluse", "hook-posttooluse", "hook-copilot-posttooluse", "hook-precompact", "hook-taskcomplete", "hook-subagent-start", "watch-claude", "watch-all", "watch-install", "watch-uninstall", "watch-status", "config", "index", "index-file", "claude-md", "init", "install-pack", "download-model", "upgrade", "whatsnew", "receipt"}
+        known_commands = {"serve", "watch", "hook-event", "hook-pretooluse", "hook-posttooluse", "hook-copilot-posttooluse", "hook-precompact", "hook-taskcomplete", "hook-subagent-start", "watch-claude", "watch-all", "watch-install", "watch-uninstall", "watch-status", "config", "index", "index-file", "claude-md", "init", "install-pack", "download-model", "upgrade", "whatsnew", "receipt", "digest"}
         has_subcommand = any(arg in known_commands for arg in raw_argv if not arg.startswith("-"))
         if not has_subcommand:
             raw_argv = ["serve"] + list(raw_argv)
@@ -5767,6 +5847,20 @@ def main(argv: Optional[list[str]] = None):
             "--repo-root", args.repo_root,
             "--max-entries", str(args.max_entries),
         ]))
+
+    if args.command == "digest":
+        from .cli.digest import main as digest_main
+        argv = [args.repo]
+        if args.since_sha:
+            argv += ["--since-sha", args.since_sha]
+        argv += ["--max-changed-files", str(args.max_changed_files)]
+        argv += ["--max-hotspots", str(args.max_hotspots)]
+        argv += ["--max-dead-code", str(args.max_dead_code)]
+        if args.json:
+            argv += ["--json"]
+        if args.storage_path:
+            argv += ["--storage-path", args.storage_path]
+        sys.exit(digest_main(argv))
 
     if args.command == "receipt":
         from .cli.receipt import main as receipt_main

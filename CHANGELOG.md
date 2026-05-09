@@ -2,6 +2,47 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.86.0] — 2026-05-09 — `digest` agent stand-up briefing
+
+todo.md item #4. New tool surface; agent-facing.
+
+### Added
+- **`digest` MCP tool** — composes a tight (~200 token) markdown
+  briefing from existing tools so an agent walking into a session
+  knows the load-bearing changes since its last visit + the current
+  high-risk surface area, without cold exploration. Each item
+  references symbol_ids the agent can immediately query
+  (`get_symbol_source` / `get_call_hierarchy` / `check_references`).
+- **State-aware delta tracking.** Per-repo state at
+  `~/.code-index/digest_state/<owner>--<name>.json` records the SHA
+  the agent last saw. On the next `digest` call, the briefing
+  includes only the *delta* since that SHA. First call announces
+  itself as a first session and seeds the state.
+- **Three sections, all capped:**
+  - *Since last session*: changed files + added/modified/removed
+    symbols (composed via `get_changed_symbols`)
+  - *Risk surface*: top hotspots by complexity × churn (composed
+    via `get_hotspots`)
+  - *Dead-code candidates*: top candidates (composed via
+    `find_dead_code`)
+  Each section degrades silently if its underlying tool errors —
+  the briefing always returns something usable.
+- **`jcodemunch-mcp digest` CLI subcommand** — prints the same
+  briefing for human standup reading. Defaults to resolving the cwd
+  via `resolve_repo`. `--json` for the structured payload.
+
+### Why this matters
+The briefing is **agent-facing, not human-facing.** An agent that
+walks into a session already knowing the load-bearing changes
+spends its first 3-4 tool calls *informed* instead of *exploratory* —
+that's a token savings *and* a quality lift on the first response.
+
+### Deferred to v2
+- `serve --briefing` flag for auto-emission on session open.
+- SubagentStart hook auto-injection of the digest's "since last
+  session" section. Wiring it into `hook-subagent-start`'s static
+  briefing requires per-client config decisions; opt-in for v2.
+
 ## [1.85.1] — 2026-05-09 — `receipt` defaults to Opus rate
 
 ### Changed

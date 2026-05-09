@@ -1,7 +1,7 @@
 # jcodemunch-mcp — Project Brief
 
 ## Current State
-- **Version:** 1.85.1 (published to PyPI)
+- **Version:** 1.86.0 (published to PyPI)
 - **INDEX_VERSION:** 9
 - **Tests:** 3724 passed, 7 skipped
 - **Python:** >=3.10
@@ -112,6 +112,7 @@ src/jcodemunch_mcp/
 | `hook-subagent-start` | SubagentStart hook: inject condensed repo orientation for spawned agents (reads JSON stdin) |
 | `whatsnew` | Refresh README recency block + write `whatsnew.json` from `CHANGELOG.md` (release flow) |
 | `receipt` | Token-economy ledger from Claude transcripts — modeled tokens-saved + dollar value at Sonnet/Opus/Haiku rates; `--explain`, `--export csv\|json`, `--days`, `--model` |
+| `digest` | Agent stand-up briefing — composes since-last-session delta + risk surface + dead-code candidates; tracks per-repo last-seen SHA at `~/.code-index/digest_state/`; also exposed as MCP tool `digest` |
 
 ## Architecture Notes
 - `index_folder` is **synchronous** — dispatched via `asyncio.to_thread()` in server.py to avoid blocking the event loop
