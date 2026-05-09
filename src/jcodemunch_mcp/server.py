@@ -5512,6 +5512,22 @@ def main(argv: Optional[list[str]] = None):
         help="Run init refresh non-interactively",
     )
 
+    # --- receipt ---
+    receipt_parser = subparsers.add_parser(
+        "receipt",
+        help="Token-economy ledger: parse Claude transcripts, show modeled tokens-saved + dollar value",
+    )
+    receipt_parser.add_argument("--days", type=int, default=30,
+        help="Window size in days (default 30; use 0 for all-time).")
+    receipt_parser.add_argument("--model", choices=["sonnet", "opus", "haiku"], default="sonnet",
+        help="Model rate to apply for the dollar conversion (default sonnet).")
+    receipt_parser.add_argument("--export", metavar="FILE.csv|FILE.json", default=None,
+        help="Write raw per-tool data to a file instead of the human report.")
+    receipt_parser.add_argument("--explain", action="store_true",
+        help="Print the per-tool savings multiplier table + methodology, then exit.")
+    receipt_parser.add_argument("--projects-root", default=None,
+        help="Override Claude Code projects directory (default ~/.claude/projects).")
+
     # --- whatsnew ---
     whatsnew_parser = subparsers.add_parser(
         "whatsnew",
@@ -5673,7 +5689,7 @@ def main(argv: Optional[list[str]] = None):
     if any(arg in top_level_flags for arg in raw_argv):
         args = parser.parse_args(raw_argv)
     else:
-        known_commands = {"serve", "watch", "hook-event", "hook-pretooluse", "hook-posttooluse", "hook-copilot-posttooluse", "hook-precompact", "hook-taskcomplete", "hook-subagent-start", "watch-claude", "watch-all", "watch-install", "watch-uninstall", "watch-status", "config", "index", "index-file", "claude-md", "init", "install-pack", "download-model", "upgrade", "whatsnew"}
+        known_commands = {"serve", "watch", "hook-event", "hook-pretooluse", "hook-posttooluse", "hook-copilot-posttooluse", "hook-precompact", "hook-taskcomplete", "hook-subagent-start", "watch-claude", "watch-all", "watch-install", "watch-uninstall", "watch-status", "config", "index", "index-file", "claude-md", "init", "install-pack", "download-model", "upgrade", "whatsnew", "receipt"}
         has_subcommand = any(arg in known_commands for arg in raw_argv if not arg.startswith("-"))
         if not has_subcommand:
             raw_argv = ["serve"] + list(raw_argv)
@@ -5751,6 +5767,17 @@ def main(argv: Optional[list[str]] = None):
             "--repo-root", args.repo_root,
             "--max-entries", str(args.max_entries),
         ]))
+
+    if args.command == "receipt":
+        from .cli.receipt import main as receipt_main
+        argv = ["--days", str(args.days), "--model", args.model]
+        if args.export:
+            argv += ["--export", args.export]
+        if args.explain:
+            argv += ["--explain"]
+        if args.projects_root:
+            argv += ["--projects-root", args.projects_root]
+        sys.exit(receipt_main(argv))
 
     if args.command == "hook-precompact":
         from .cli.hooks import run_precompact

@@ -2,6 +2,35 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.85.0] — 2026-05-09 — `receipt` token-economy ledger
+
+todo.md item #3. New CLI surface; no behaviour change to existing tools.
+
+### Added
+- **`jcodemunch-mcp receipt`** — parses `~/.claude/projects/**/*.jsonl`
+  transcripts, extracts every `mcp__jcodemunch__*` tool call + its
+  result, applies per-tool savings multipliers calibrated against the
+  published RAG benchmarks, and prints a dollar-denominated ROI ledger.
+  Three model rates surfaced inline (Sonnet / Opus / Haiku); default is
+  Sonnet. Per-tool breakdown ranked by savings-tokens.
+- **`--explain`** prints the full per-tool multiplier table + the
+  methodology page so the dollar number is auditable. Multipliers are
+  deliberately conservative against the 30–56× RAG-benchmark numbers —
+  underestimating savings keeps the dollar figure defensible.
+- **`--export FILE.csv|FILE.json`** writes raw per-tool data for
+  finance teams or downstream dashboards. CSV is human/Excel-friendly;
+  JSON includes the totals + dollar value at the chosen model rate.
+- **`--days N`** windows to the last N days (default 30; 0 for all-time).
+- **`--projects-root PATH`** override for non-default Claude Code
+  install layouts.
+
+### Methodology
+- Token savings is inherently counterfactual — we can't observe what
+  naive Read+Grep would have cost without running it. The per-tool
+  multipliers (in `cli/receipt.py`) are modeled, not measured. They're
+  set lower than published benchmark ratios so the dollar number stays
+  credible. Edit them in a PR if you have better calibration data.
+
 ## [1.84.0] — 2026-05-09 — One-click install badges + auto-recency block + version-drift hint
 
 Top-of-fold UX wins (todo.md items #1, #2). Three additive surfaces, zero
