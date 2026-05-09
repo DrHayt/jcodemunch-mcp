@@ -2,6 +2,45 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.84.0] — 2026-05-09 — One-click install badges + auto-recency block + version-drift hint
+
+Top-of-fold UX wins (todo.md items #1, #2). Three additive surfaces, zero
+behaviour change to existing tools.
+
+### Added
+- **One-click install badges** at the top of the README for VS Code,
+  VS Code Insiders, and Cursor (URI-scheme deeplinks that pre-fill the
+  MCP config and prompt for confirmation), plus shields-style buttons
+  for Claude Code and Codex CLI that anchor to the in-README config
+  section. Eliminates the "follow these 4 steps" friction at the
+  highest-intent moment (someone reading the README to decide whether
+  to install).
+- **Auto-generated `What's new` block** in the README, populated from
+  the top of `CHANGELOG.md` between `<!-- WHATSNEW:START -->` /
+  `<!-- WHATSNEW:END -->` markers. Refreshed by the new
+  `jcodemunch-mcp whatsnew` subcommand as part of the release flow,
+  so the block can never go stale.
+- **`whatsnew.json` artifact** generated alongside the wheel/sdist.
+  Machine-readable feed of recent releases for downstream consumers
+  (drift probes, dashboards, syndicated changelogs).
+- **First-launch version-drift probe** (new module
+  `version_check.py`) — when the server starts and the
+  cached `~/.code-index/last_seen_version` differs from the running
+  version, emit a one-line stderr hint pointing at the matching GitHub
+  release notes. Silent on first-ever launch, on no-drift, and on any
+  OS-level failure. Disable with `JCODEMUNCH_NO_VERSION_HINT=1`.
+- **`whatsnew` CLI subcommand** — runs the README marker refresh +
+  `whatsnew.json` generation locally; intended to be called from the
+  release script before `python -m build`.
+
+### Notes for users on older versions
+- After upgrading from any 1.83.x, you'll see the new one-line stderr
+  hint *once* on first launch ("upgraded 1.83.x → 1.84.0 — release
+  notes: ..."). It's idempotent — subsequent launches stay silent
+  until the next upgrade.
+- README markers are additive — no impact on existing PyPI page
+  rendering or in-README anchors.
+
 ## [1.83.2] — 2026-05-08 — Docs: Codex CLI install workaround
 
 ### Changed

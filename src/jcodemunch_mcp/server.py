@@ -4165,6 +4165,14 @@ async def run_stdio_server():
         os.path.expanduser(os.environ.get("CODE_INDEX_PATH", "~/.code-index/")),
         _default_use_ai_summaries(),
     )
+    # Version-drift probe: on first launch after upgrade, emit a one-line
+    # hint pointing at the release notes. Silent on first-ever launch and
+    # on any OS-level failure.
+    try:
+        from .version_check import check_and_announce
+        check_and_announce()
+    except Exception:
+        logger.debug("version_check probe failed", exc_info=True)
     # Feature 10: Restore session state on startup
     _restore_session_state()
     # Log tier bundle / disabled_tools overlap warnings
@@ -5504,6 +5512,23 @@ def main(argv: Optional[list[str]] = None):
         help="Run init refresh non-interactively",
     )
 
+    # --- whatsnew ---
+    whatsnew_parser = subparsers.add_parser(
+        "whatsnew",
+        help="Refresh README recency block + write whatsnew.json from CHANGELOG.md (release flow)",
+    )
+    whatsnew_parser.add_argument(
+        "--repo-root",
+        default=".",
+        help="Repository root (default: cwd)",
+    )
+    whatsnew_parser.add_argument(
+        "--max-entries",
+        type=int,
+        default=3,
+        help="Number of recent releases to include (default 3)",
+    )
+
     # --- hook-precompact ---
     subparsers.add_parser(
         "hook-precompact",
@@ -5648,7 +5673,7 @@ def main(argv: Optional[list[str]] = None):
     if any(arg in top_level_flags for arg in raw_argv):
         args = parser.parse_args(raw_argv)
     else:
-        known_commands = {"serve", "watch", "hook-event", "hook-pretooluse", "hook-posttooluse", "hook-copilot-posttooluse", "hook-precompact", "hook-taskcomplete", "hook-subagent-start", "watch-claude", "watch-all", "watch-install", "watch-uninstall", "watch-status", "config", "index", "index-file", "claude-md", "init", "install-pack", "download-model", "upgrade"}
+        known_commands = {"serve", "watch", "hook-event", "hook-pretooluse", "hook-posttooluse", "hook-copilot-posttooluse", "hook-precompact", "hook-taskcomplete", "hook-subagent-start", "watch-claude", "watch-all", "watch-install", "watch-uninstall", "watch-status", "config", "index", "index-file", "claude-md", "init", "install-pack", "download-model", "upgrade", "whatsnew"}
         has_subcommand = any(arg in known_commands for arg in raw_argv if not arg.startswith("-"))
         if not has_subcommand:
             raw_argv = ["serve"] + list(raw_argv)
@@ -5719,6 +5744,13 @@ def main(argv: Optional[list[str]] = None):
     if args.command == "upgrade":
         from .cli.upgrade import run_upgrade
         sys.exit(run_upgrade(no_pip=args.no_pip, yes=args.yes))
+
+    if args.command == "whatsnew":
+        from .cli.whatsnew import main as whatsnew_main
+        sys.exit(whatsnew_main([
+            "--repo-root", args.repo_root,
+            "--max-entries", str(args.max_entries),
+        ]))
 
     if args.command == "hook-precompact":
         from .cli.hooks import run_precompact

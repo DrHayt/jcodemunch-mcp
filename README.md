@@ -81,6 +81,22 @@ is a byte the agent doesn't pay to read.
 
 ### Structured code retrieval for serious AI agents
 
+#### One-click install
+
+[![Install in VS Code](https://img.shields.io/badge/VS_Code-Install_jCodeMunch-007ACC?style=for-the-badge&logo=visualstudiocode&logoColor=white)](vscode:mcp/install?%7B%22name%22%3A%20%22jcodemunch%22%2C%20%22command%22%3A%20%22uvx%22%2C%20%22args%22%3A%20%5B%22jcodemunch-mcp%22%5D%7D)
+[![Install in VS Code Insiders](https://img.shields.io/badge/VS_Code_Insiders-Install-24bfa5?style=for-the-badge&logo=visualstudiocode&logoColor=white)](vscode-insiders:mcp/install?%7B%22name%22%3A%20%22jcodemunch%22%2C%20%22command%22%3A%20%22uvx%22%2C%20%22args%22%3A%20%5B%22jcodemunch-mcp%22%5D%7D)
+[![Install in Cursor](https://img.shields.io/badge/Cursor-Install_jCodeMunch-000000?style=for-the-badge&logo=cursor&logoColor=white)](cursor://anysphere.cursor-deeplink/mcp/install?name=jcodemunch&config=eyJjb21tYW5kIjogInV2eCIsICJhcmdzIjogWyJqY29kZW11bmNoLW1jcCJdfQ==)
+[![Claude Code](https://img.shields.io/badge/Claude_Code-CLI_install-D97757?style=for-the-badge&logo=anthropic&logoColor=white)](#works-with)
+[![Codex CLI](https://img.shields.io/badge/Codex_CLI-Config_install-10a37f?style=for-the-badge&logo=openai&logoColor=white)](#works-with)
+
+<!-- WHATSNEW:START -->
+#### What's new
+
+- **[v1.84.0](https://github.com/jgravelle/jcodemunch-mcp/releases/tag/v1.84.0)** (2026-05-09) — One-click install badges + auto-recency block + version-drift hint
+- **[v1.83.2](https://github.com/jgravelle/jcodemunch-mcp/releases/tag/v1.83.2)** (2026-05-08) — Docs: Codex CLI install workaround
+- **[v1.83.1](https://github.com/jgravelle/jcodemunch-mcp/releases/tag/v1.83.1)** (2026-05-08) — Reference-tool response shapes carry line numbers + flat import aliases
+<!-- WHATSNEW:END -->
+
 ![License](https://img.shields.io/badge/license-dual--use-blue)
 ![MCP](https://img.shields.io/badge/MCP-compatible-purple)
 ![Local-first](https://img.shields.io/badge/local--first-yes-brightgreen)
