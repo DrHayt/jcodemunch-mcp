@@ -2,6 +2,42 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.92.0] — 2026-05-09 — coupling axis: filename-pattern filter for inline test conventions
+
+Closes [#280](https://github.com/jgravelle/jcodemunch-mcp/issues/280).
+v1.91.0 fixed the coupling axis for projects that use a `tests/`
+directory, but left untouched ecosystems that co-locate tests with
+source: Go (`*_test.go`), TypeScript (`*.spec.ts`, `*.test.ts`),
+JavaScript (Jest/Jasmine/Karma), Ruby (RSpec), and Java (JUnit).
+The first observatory rebuild after v1.91.0 confirmed the gap:
+test-heavy Python repos moved C → B/A, but Gin, Cobra, and NestJS
+showed Δ = 0.
+
+This release adds a regex-based filename filter alongside the
+existing directory filter. `_is_production_path` now returns
+`False` for any of:
+
+- `*_test.go` — Go's standard testing convention
+- `*.test.{js,jsx,ts,tsx}` — Jest
+- `*.spec.{js,jsx,ts,tsx}` — Jasmine, Karma, Angular, NestJS
+- `*_spec.rb` — RSpec
+- `*Test.java` — JUnit (case-insensitive)
+
+### Changed
+- `tools/get_repo_health.py` introduces `_NON_PRODUCTION_FILENAME_RE`
+  alongside `_NON_PRODUCTION_DIR_NAMES`. Both filters are applied;
+  failing either drops the path from the production set.
+
+### Added
+- 16 new parametrized test cases in `TestProductionPathFilter`
+  covering each filename convention plus near-miss cases that
+  should *not* be filtered (`protest.go`, `manifest.ts`, etc.).
+
+### Out of scope
+- Inline test conventions like Rust's `#[cfg(test)] mod tests`
+  cannot be detected by path alone. Would need an AST-aware
+  approach. Open follow-up; not blocking.
+
 ## [1.91.0] — 2026-05-09 — coupling axis: exclude tests/benchmarks/scripts from the metric
 
 The coupling axis was structurally biased against well-tested
