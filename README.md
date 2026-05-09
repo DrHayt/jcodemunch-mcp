@@ -10,6 +10,10 @@ Quickstart - https://github.com/jgravelle/jcodemunch-mcp/blob/main/QUICKSTART.md
 
 A crapload of detailed info: http://jcodemunch.com/
 
+**Live OSS code-health observatory** — weekly six-axis health snapshots
+of Express, FastAPI, Gin, Pydantic, Django, Flask, NestJS, Cobra, and
+this very repo: https://jgravelle.github.io/jcodemunch-observatory/
+
 <!-- mcp-name: io.github.jgravelle/jcodemunch-mcp -->
 
 ## FREE FOR PERSONAL USE
