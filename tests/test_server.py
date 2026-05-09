@@ -21,7 +21,7 @@ async def test_server_lists_all_tools():
     try:
         tools = await list_tools()
 
-        assert len(tools) == 68  # 65 + set_tool_tier + announce_model + jcodemunch_guide  (diff_health_radar added in v1.87.0, digest in v1.86.0)
+        assert len(tools) == 69  # 66 + set_tool_tier + announce_model + jcodemunch_guide  (get_file_risk in v1.89.0, diff_health_radar v1.87.0, digest v1.86.0)
 
         names = {t.name for t in tools}
         expected = {
@@ -47,7 +47,7 @@ async def test_server_lists_all_tools():
             "winnow_symbols", "get_watch_status", "analyze_perf", "tune_weights",
             "check_embedding_drift",
             "set_tool_tier", "announce_model", "jcodemunch_guide",
-            "digest", "diff_health_radar",
+            "digest", "diff_health_radar", "get_file_risk",
         }
         assert names == expected
         assert "test_summarizer" not in names  # disabled by default in DEFAULTS
@@ -667,9 +667,9 @@ async def test_disabled_tools_filtered_from_schema(monkeypatch):
         assert "index_repo" not in tool_names
         assert "search_columns" not in tool_names
         assert "get_file_tree" in tool_names  # Not disabled
-        # 68 default tools (65 + 3 force-included) + test_summarizer (config cleared) - 2 disabled = 67
+        # 69 default tools (66 + 3 force-included) + test_summarizer (config cleared) - 2 disabled = 68
         # But set_tool_tier + announce_model + jcodemunch_guide are force-included even when disabled
-        assert len(tools) == 67
+        assert len(tools) == 68
     finally:
         config_module._GLOBAL_CONFIG.clear()
         config_module._GLOBAL_CONFIG.update(orig_config)
@@ -677,7 +677,7 @@ async def test_disabled_tools_filtered_from_schema(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_disabled_tools_empty_all_tools_present(monkeypatch):
-    """When disabled_tools is empty, all 66 tools are present."""
+    """When disabled_tools is empty, all 67 tools are present."""
     from jcodemunch_mcp import config as config_module
 
     orig_config = config_module._GLOBAL_CONFIG.copy()
@@ -687,7 +687,7 @@ async def test_disabled_tools_empty_all_tools_present(monkeypatch):
         config_module._GLOBAL_CONFIG["disabled_tools"] = []
 
         tools = await list_tools()
-        assert len(tools) == 69  # 66 + set_tool_tier + announce_model + jcodemunch_guide  (diff_health_radar in v1.87.0, digest in v1.86.0)
+        assert len(tools) == 70  # 67 + set_tool_tier + announce_model + jcodemunch_guide  (get_file_risk v1.89.0, diff_health_radar v1.87.0, digest v1.86.0)
     finally:
         config_module._GLOBAL_CONFIG.clear()
         config_module._GLOBAL_CONFIG.update(orig_config)

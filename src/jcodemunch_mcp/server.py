@@ -78,6 +78,8 @@ _CANONICAL_TOOL_NAMES: tuple[str, ...] = (
     "digest",
     # Health-radar diff (PR-time diff-grade reports)
     "diff_health_radar",
+    # Per-file risk (powers VS Code gutter)
+    "get_file_risk",
     # Runtime tier switching
     "set_tool_tier", "announce_model",
     # Composite retrieval
@@ -129,6 +131,8 @@ _TOOL_TIER_STANDARD: frozenset[str] = _TOOL_TIER_CORE | frozenset({
     "digest",
     # Health-radar diff
     "diff_health_radar",
+    # Per-file risk (powers VS Code gutter)
+    "get_file_risk",
 })
 
 # full = everything (no filter applied)
@@ -1397,6 +1401,33 @@ def _build_tools_list() -> list[Tool]:
                         "description": "Include dead-end searches (negative evidence) in snapshot.",
                     },
                 },
+            },
+        ),
+        Tool(
+            name="get_file_risk",
+            description=(
+                "Per-symbol composite risk for one file. For each function or "
+                "method, returns a 0-100 composite score (higher = healthier; "
+                "lower = riskier) plus per-axis sub-scores (complexity, exposure, "
+                "churn, test_gap). Powers the VS Code risk-density gutter. "
+                "complexity is per-symbol (cyclomatic from the index); the other "
+                "three axes are file-level (shared across all symbols in the file) "
+                "because per-symbol caller-count needs find_references per symbol "
+                "and would be too slow for save-time refresh."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "repo": {
+                        "type": "string",
+                        "description": "Repo identifier (owner/name, full id, or bare display name).",
+                    },
+                    "file_path": {
+                        "type": "string",
+                        "description": "Path to the file within the indexed repo.",
+                    },
+                },
+                "required": ["repo", "file_path"],
             },
         ),
         Tool(
@@ -3445,6 +3476,16 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                     storage_path=storage_path,
                 )
             )
+        elif name == "get_file_risk":
+            from .tools.get_file_risk import get_file_risk
+            result = await asyncio.to_thread(
+                functools.partial(
+                    get_file_risk,
+                    repo=arguments["repo"],
+                    file_path=arguments["file_path"],
+                    storage_path=storage_path,
+                )
+            )
         elif name == "diff_health_radar":
             from .tools.health_radar import diff_health_radar
             result = await asyncio.to_thread(
@@ -4740,7 +4781,7 @@ def _generate_claude_md_snippet(missing_only: bool = False) -> str:
                           "get_project_intel"]),
         ("Quality & Metrics", ["get_symbol_complexity", "get_churn_rate", "get_hotspots",
                                 "get_repo_health", "diff_health_radar",
-                                "get_symbol_importance",
+                                "get_file_risk", "get_symbol_importance",
                                 "find_dead_code", "get_dead_code_v2",
                                 "get_untested_symbols", "search_ast",
                                 "winnow_symbols"]),
@@ -5612,6 +5653,18 @@ def main(argv: Optional[list[str]] = None):
         help="Run init refresh non-interactively",
     )
 
+    # --- file-risk ---
+    file_risk_parser = subparsers.add_parser(
+        "file-risk",
+        help="Print per-symbol risk JSON for a file (used by VS Code risk-density gutter)",
+    )
+    file_risk_parser.add_argument("file",
+        help="Path to the file within an indexed repo.")
+    file_risk_parser.add_argument("--repo", default=None,
+        help="Repo identifier (auto-detected from file path if omitted).")
+    file_risk_parser.add_argument("--storage-path", default=None,
+        help="Override index storage location.")
+
     # --- health ---
     health_parser = subparsers.add_parser(
         "health",
@@ -5823,7 +5876,7 @@ def main(argv: Optional[list[str]] = None):
     if any(arg in top_level_flags for arg in raw_argv):
         args = parser.parse_args(raw_argv)
     else:
-        known_commands = {"serve", "watch", "hook-event", "hook-pretooluse", "hook-posttooluse", "hook-copilot-posttooluse", "hook-precompact", "hook-taskcomplete", "hook-subagent-start", "watch-claude", "watch-all", "watch-install", "watch-uninstall", "watch-status", "config", "index", "index-file", "claude-md", "init", "install-pack", "download-model", "upgrade", "whatsnew", "receipt", "digest", "health"}
+        known_commands = {"serve", "watch", "hook-event", "hook-pretooluse", "hook-posttooluse", "hook-copilot-posttooluse", "hook-precompact", "hook-taskcomplete", "hook-subagent-start", "watch-claude", "watch-all", "watch-install", "watch-uninstall", "watch-status", "config", "index", "index-file", "claude-md", "init", "install-pack", "download-model", "upgrade", "whatsnew", "receipt", "digest", "health", "file-risk"}
         has_subcommand = any(arg in known_commands for arg in raw_argv if not arg.startswith("-"))
         if not has_subcommand:
             raw_argv = ["serve"] + list(raw_argv)
@@ -5901,6 +5954,15 @@ def main(argv: Optional[list[str]] = None):
             "--repo-root", args.repo_root,
             "--max-entries", str(args.max_entries),
         ]))
+
+    if args.command == "file-risk":
+        from .cli.file_risk import main as file_risk_main
+        argv = [args.file]
+        if args.repo:
+            argv += ["--repo", args.repo]
+        if args.storage_path:
+            argv += ["--storage-path", args.storage_path]
+        sys.exit(file_risk_main(argv))
 
     if args.command == "health":
         from .cli.health import main as health_main

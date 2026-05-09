@@ -1,7 +1,7 @@
 # jcodemunch-mcp — Project Brief
 
 ## Current State
-- **Version:** 1.88.0 (published to PyPI)
+- **Version:** 1.89.0 (published to PyPI; VS Code extension at 0.2.0)
 - **INDEX_VERSION:** 9
 - **Tests:** 3724 passed, 7 skipped
 - **Python:** >=3.10
@@ -115,6 +115,7 @@ src/jcodemunch_mcp/
 | `receipt` | Token-economy ledger from Claude transcripts — modeled tokens-saved + dollar value at Sonnet/Opus/Haiku rates; `--explain`, `--export csv\|json`, `--days`, `--model` |
 | `digest` | Agent stand-up briefing — composes since-last-session delta + risk surface + dead-code candidates; tracks per-repo last-seen SHA at `~/.code-index/digest_state/`; also exposed as MCP tool `digest` |
 | `health` | Print `get_repo_health` JSON to stdout (includes six-axis radar). For CI/scripting; `--radar-only` for just the radar sub-field. Used by the v1.88.0 health-radar GitHub Action |
+| `file-risk` | Print per-symbol risk JSON for a file (composite score + four-axis breakdown). Used by the v0.2.0 VS Code risk-density gutter |
 
 ## Architecture Notes
 - `index_folder` is **synchronous** — dispatched via `asyncio.to_thread()` in server.py to avoid blocking the event loop

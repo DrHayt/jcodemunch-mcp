@@ -322,7 +322,7 @@ DEFAULTS = {
             "get_tectonic_map", "get_signal_chains", "render_diagram",
             "get_project_intel", "invalidate_cache", "get_watch_status",
             "analyze_perf", "tune_weights", "check_embedding_drift",
-            "digest", "diff_health_radar",
+            "digest", "diff_health_radar", "get_file_risk",
         ],
     },
     "model_tier_map": {
@@ -1245,6 +1245,7 @@ def generate_template() -> str:
         "get_extraction_candidates",
         "get_file_content",
         "get_file_outline",
+        "get_file_risk",
         "get_file_tree",
         "get_hotspots",
         "get_impact_preview",

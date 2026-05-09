@@ -1,6 +1,7 @@
 import * as vscode from "vscode";
 import { spawn } from "child_process";
 import * as path from "path";
+import { activateRiskGutter, deactivateRiskGutter } from "./riskGutter";
 
 const CODE_EXTS = new Set<string>([
     ".py", ".pyi",
@@ -105,9 +106,13 @@ export function activate(context: vscode.ExtensionContext) {
             scheduleReindex(doc.uri.fsPath);
         }),
     );
+
+    // Risk-density gutter (v1.89.0) — gated by jcodemunch.riskGutter.enabled.
+    activateRiskGutter(context);
 }
 
 export function deactivate() {
     for (const t of pendingTimers.values()) clearTimeout(t);
     pendingTimers.clear();
+    deactivateRiskGutter();
 }

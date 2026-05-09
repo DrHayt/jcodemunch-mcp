@@ -1,8 +1,8 @@
 {
   "name": "jcodemunch-mcp-vscode",
-  "displayName": "jCodeMunch — Auto Reindex on Save",
-  "description": "Auto-reindexes saved files via jcodemunch-mcp. Keeps the code index fresh when editing in VS Code under Copilot, Continue, Cline, or any MCP client without its own PostToolUse hook.",
-  "version": "0.1.0",
+  "displayName": "jCodeMunch — Auto Reindex + Risk Gutter",
+  "description": "Auto-reindexes saved files and paints a per-symbol risk-density gutter (yellow/orange/red dots at risky function headers, hover for breakdown). Powered by jcodemunch-mcp.",
+  "version": "0.2.0",
   "publisher": "jgravelle",
   "license": "MIT",
   "repository": {
@@ -53,6 +53,16 @@
             "**/*.min.*"
           ],
           "description": "Glob patterns for files to skip on save."
+        },
+        "jcodemunch.riskGutter.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Paint a per-symbol risk-density gutter (yellow/orange/red dots at function headers; green = invisible). Refreshes on file open + on save. Disable if it gets noisy."
+        },
+        "jcodemunch.riskGutter.debounceMs": {
+          "type": "number",
+          "default": 600,
+          "description": "Per-file debounce window for the risk-gutter refresh on save."
         }
       }
     }

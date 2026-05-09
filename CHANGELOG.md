@@ -2,6 +2,52 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.89.0] — 2026-05-09 — VS Code risk-density gutter
+
+todo.md item #6. Server-side `get_file_risk` tool + `file-risk` CLI +
+extension v0.2.0 with the gutter renderer.
+
+### Added (server)
+- **`get_file_risk` MCP tool.** For each function/method in a file,
+  returns a 0–100 composite risk score (higher = healthier; lower =
+  riskier) plus per-axis sub-scores: `complexity` (per-symbol from
+  cyclomatic), `exposure` (file-level fan-in), `churn` (file-level
+  30-day commit count), `test_gap` (file-level: does any test file
+  import this module?). Risk levels: `green` (≥85), `yellow` (70-85),
+  `orange` (55-70), `red` (<55).
+- **`jcodemunch-mcp file-risk <file>` CLI subcommand.** Prints the
+  full `get_file_risk` JSON to stdout with auto-detection of the
+  containing repo from the file path. Used by the v0.2.0 VS Code
+  extension's gutter; suitable for any other consumer that wants
+  per-symbol risk data without writing a Python wrapper.
+
+### Added (VS Code extension v0.2.0)
+- **Risk-density gutter.** Colored dot in the editor gutter at each
+  function/method header — yellow / orange / red by composite risk
+  level. Green is *invisible* (signal-to-noise stays high). Refreshes
+  on file open + on save (typing does not refresh — cyclomatic
+  doesn't move with whitespace edits).
+- **Hover provider.** Hover any decorated line to see the per-axis
+  breakdown as a markdown tooltip with concrete signals
+  (cyclomatic value, importing-files count, 30-day commits, has-tests
+  yes/no) plus drill-in suggestions (`get_call_hierarchy`,
+  `get_pr_risk_profile`).
+- **Two new settings.** `jcodemunch.riskGutter.enabled` (default
+  true), `jcodemunch.riskGutter.debounceMs` (default 600).
+- Extension renamed: **"jCodeMunch — Auto Reindex + Risk Gutter"**.
+- Extension version bump: 0.1.0 → 0.2.0.
+
+### Methodology
+Per-axis scoring rules live in `tools/get_file_risk.py:_score_*` and
+mirror the posture of `health_radar` (linear penalties, conservative
+calibration). PR an updated formula with calibration data.
+
+### Why per-symbol exposure / churn / test_gap aren't included
+At file granularity, they require `find_references` per symbol +
+per-symbol git blame, which is too slow to drive a save-time gutter
+refresh. v2 may add per-symbol axes once the file-level signal proves
+its value.
+
 ## [1.88.0] — 2026-05-09 — Health-radar GitHub Action + `health` CLI
 
 todo.md item #5 (closeout). v1.87 shipped the radar data layer; this
