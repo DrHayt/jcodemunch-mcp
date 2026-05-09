@@ -2,6 +2,20 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.83.2] — 2026-05-08 — Docs: Codex CLI install workaround
+
+### Changed
+- **README — Codex CLI config block rewritten** to lead with the
+  pre-installed-binary install pattern instead of `uvx`. Closes the
+  loop on the paying-client report that drove v1.82.1's handshake
+  watchdog: the watchdog correctly stays silent under the venv install,
+  but the README still recommended the `uvx` invocation that caused
+  the original 5h 53min hang. Now points at the venv pattern, mentions
+  `JCODEMUNCH_HANDSHAKE_TIMEOUT` for diagnostics, and adds a note on
+  Codex's elicitation/approval system silently declining tool calls
+  in `codex review --background` mode (a Codex-side concern, tracked
+  upstream).
+
 ## [1.83.1] — 2026-05-08 — Reference-tool response shapes carry line numbers + flat import aliases
 
 ### Added

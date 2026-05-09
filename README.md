@@ -722,8 +722,43 @@ Tested configurations:
 <details>
 <summary>Codex CLI config</summary>
 
+**Recommended (pre-installed binary, no `uvx`).** Codex's rmcp transport
+is strict about the first JSON-RPC frame on stdout. `uvx`'s install
+chatter on first run can poison the handshake, which historically
+manifests as a silent multi-hour hang. Install the package into a
+project venv and point Codex at the resolved binary directly:
+
+```bash
+python3 -m venv .venv
+.venv/bin/pip install -U jcodemunch-mcp
+.venv/bin/jcodemunch-mcp --help   # confirm the binary resolves
+```
+
 ```toml
 # ~/.codex/config.toml
+[mcp_servers.jcodemunch]
+command = "/absolute/path/to/.venv/bin/jcodemunch-mcp"
+# (no args required)
+```
+
+If the handshake still doesn't complete, set
+`JCODEMUNCH_HANDSHAKE_TIMEOUT=5` (the default) and watch stderr — v1.82.1+
+emits a one-line hint when the client doesn't call any handler within
+the window.
+
+**Note for `codex review --background` and other non-interactive runs.**
+Codex's MCP elicitation/approval system can silently *decline* tool
+calls to unrecognised servers in non-interactive mode (visible in
+`~/.codex/logs_2.sqlite` as `ResolveElicitation { decision: Decline }`
+with no chatter on the server side). This is a Codex-side concern, not
+a jcodemunch one — track upstream
+[here](https://github.com/openai/codex) for the right per-server
+auto-approve key. Interactive `codex` runs are unaffected.
+
+**Legacy `uvx` config** (kept for reference; works on tolerant clients,
+not recommended for Codex):
+
+```toml
 [mcp_servers.jcodemunch]
 command = "uvx"
 args = ["jcodemunch-mcp"]
