@@ -148,6 +148,19 @@ CREATE TABLE IF NOT EXISTS runtime_redaction_log (
     last_redacted    TEXT,
     PRIMARY KEY (source, pattern)
 );
+
+CREATE TABLE IF NOT EXISTS runtime_columns (
+    model_name   TEXT NOT NULL,
+    column_name  TEXT NOT NULL,
+    source       TEXT NOT NULL,
+    count        INTEGER NOT NULL DEFAULT 0,
+    first_seen   TEXT,
+    last_seen    TEXT,
+    PRIMARY KEY (model_name, column_name, source)
+);
+
+CREATE INDEX IF NOT EXISTS idx_runtime_columns_model ON runtime_columns(model_name);
+CREATE INDEX IF NOT EXISTS idx_runtime_columns_last_seen ON runtime_columns(last_seen);
 """
 
 # Pragmas set on every connection open
@@ -460,6 +473,34 @@ def _migrate_v13_to_v14(conn: sqlite3.Connection) -> None:
     logger.info("Migrated v13→v14: added runtime_* tables for trace ingestion")
 
 
+def _migrate_v14_to_v15(conn: sqlite3.Connection) -> None:
+    """Migrate a v14 database to v15: add runtime_columns for SQL-log ingest (Phase 4).
+
+    Existing runtime_calls / runtime_edges / runtime_imports / runtime_unmapped /
+    runtime_redaction_log rows are preserved verbatim — the new table is purely
+    additive. Stays empty until ``import_runtime_signal({source: 'sql_log'})``
+    runs against a dbt-style repo whose index already has dbt_columns metadata.
+    """
+    conn.executescript("""\
+        CREATE TABLE IF NOT EXISTS runtime_columns (
+            model_name   TEXT NOT NULL,
+            column_name  TEXT NOT NULL,
+            source       TEXT NOT NULL,
+            count        INTEGER NOT NULL DEFAULT 0,
+            first_seen   TEXT,
+            last_seen    TEXT,
+            PRIMARY KEY (model_name, column_name, source)
+        );
+        CREATE INDEX IF NOT EXISTS idx_runtime_columns_model ON runtime_columns(model_name);
+        CREATE INDEX IF NOT EXISTS idx_runtime_columns_last_seen ON runtime_columns(last_seen);
+    """)
+    conn.execute(
+        "INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)",
+        ("index_version", "15"),
+    )
+    logger.info("Migrated v14→v15: added runtime_columns table for SQL-log ingest")
+
+
 def _unlink_retry(path: Path, retries: int = 3, delay: float = 0.1) -> bool:
     """Delete a file with retry logic for Windows file-locking (PermissionError).
 
@@ -551,6 +592,8 @@ class SQLiteIndexStore:
                     _migrate_v8_to_v9(conn)
                 if stored_version < 14:
                     _migrate_v13_to_v14(conn)
+                if stored_version < 15:
+                    _migrate_v14_to_v15(conn)
 
             SQLiteIndexStore._initialized_dbs.add(db_key)
 

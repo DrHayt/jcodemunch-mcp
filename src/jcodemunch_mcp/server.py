@@ -803,13 +803,14 @@ def _build_tools_list() -> list[Tool]:
         Tool(
             name="import_runtime_signal",
             description=(
-                "Ingest a runtime trace file (OTel JSON / JSON-Lines / .gz) into the "
-                "runtime_* tables for the target repo. Maps spans to indexed symbols "
-                "via (file_path, line_no, function_name) and records duration metrics "
-                "(p50/p95) plus per-edge counts. Returns {records, mapped, unmapped, "
-                "redactions_fired, unmapped_reasons, evicted}. PII is redacted at the "
-                "ingest chokepoint by default. Phase 1 supports source='otel'; "
-                "sql_log / stack_log / apm land in Phase 4+."
+                "Ingest a runtime trace file into the runtime_* tables for the target "
+                "repo. source='otel' takes OTel JSON / JSON-Lines / .gz and maps spans "
+                "via (file_path, line_no, function_name); source='sql_log' takes "
+                "pg_stat_statements CSV or a generic SQL JSON-Lines log and maps queries "
+                "via referenced tables (file-stem match) and dbt/SQLMesh column metadata. "
+                "Returns {records, mapped, unmapped, redactions_fired, unmapped_reasons, "
+                "evicted, columns_recorded?}. PII is redacted at the ingest chokepoint by "
+                "default. stack_log lands in Phase 5; apm is reserved."
             ),
             inputSchema={
                 "type": "object",
@@ -817,7 +818,7 @@ def _build_tools_list() -> list[Tool]:
                     "source": {
                         "type": "string",
                         "enum": ["otel", "sql_log", "stack_log", "apm"],
-                        "description": "Trace source format. Phase 1 accepts only 'otel'.",
+                        "description": "Trace source format. Phases 1+4 accept 'otel' and 'sql_log'.",
                         "default": "otel",
                     },
                     "path": {
@@ -5723,16 +5724,22 @@ def main(argv: Optional[list[str]] = None):
     )
     _add_common_args(index_file_parser)
 
-    # --- import-trace (Phase 1: OTel file ingest) ---
+    # --- import-trace (Phases 1 + 4: OTel + SQL log file ingest) ---
     import_trace_parser = subparsers.add_parser(
         "import-trace",
-        help="Ingest a runtime trace file (OTel JSON / JSONL) into the index's runtime_* tables",
+        help="Ingest a runtime trace file (OTel JSON / JSONL or SQL query log) into the runtime_* tables",
     )
     import_trace_parser.add_argument(
         "--otel",
         dest="otel_path",
         metavar="PATH",
         help="Path to an OTel JSON, JSON-Lines, or .gz trace file",
+    )
+    import_trace_parser.add_argument(
+        "--sql-log",
+        dest="sql_log_path",
+        metavar="PATH",
+        help="Path to a pg_stat_statements CSV or generic SQL query JSON-Lines log",
     )
     import_trace_parser.add_argument(
         "--repo",
@@ -6413,15 +6420,30 @@ def main(argv: Optional[list[str]] = None):
         from .tools.import_runtime_signal import import_runtime_signal as _import_runtime_signal
         import json as _json
 
-        if not getattr(args, "otel_path", None):
+        otel_path = getattr(args, "otel_path", None)
+        sql_log_path = getattr(args, "sql_log_path", None)
+        if not otel_path and not sql_log_path:
             print(
-                "jcodemunch-mcp: error: import-trace requires --otel <path>",
+                "jcodemunch-mcp: error: import-trace requires either --otel <path> or --sql-log <path>",
                 file=sys.stderr,
             )
             sys.exit(2)
+        if otel_path and sql_log_path:
+            print(
+                "jcodemunch-mcp: error: import-trace accepts --otel OR --sql-log, not both. "
+                "Run the command twice if you have one of each.",
+                file=sys.stderr,
+            )
+            sys.exit(2)
+        if otel_path:
+            source = "otel"
+            trace_path = otel_path
+        else:
+            source = "sql_log"
+            trace_path = sql_log_path
         result = _import_runtime_signal(
-            source="otel",
-            path=args.otel_path,
+            source=source,
+            path=trace_path,
             repo=args.repo,
             redact_enabled=not args.no_redact,
             storage_path=os.environ.get("CODE_INDEX_PATH"),

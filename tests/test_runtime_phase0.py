@@ -90,7 +90,7 @@ def test_v9_database_migrates_to_v14(tmp_path):
         version = conn.execute(
             "SELECT value FROM meta WHERE key='index_version'"
         ).fetchone()["value"]
-        assert version == "14"
+        assert version == "15"
         for table in _RUNTIME_TABLES:
             row = conn.execute(
                 "SELECT name FROM sqlite_master WHERE type='table' AND name=?",

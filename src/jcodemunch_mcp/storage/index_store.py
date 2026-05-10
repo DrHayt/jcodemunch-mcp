@@ -21,6 +21,15 @@ from .sqlite_store import SQLiteIndexStore, _VERIFIED_PATHS
 logger = logging.getLogger(__name__)
 
 # Bump this when the index schema changes in an incompatible way.
+# v15 (1.98.0): adds `runtime_columns(model_name, column_name, source,
+# count, last_seen, first_seen)` table for Phase 4 SQL-log ingest.
+# Tracks which dbt/SQLMesh model columns are actually read in production
+# queries vs. merely declared in the manifest. Tables 14-vintage upgrade
+# in place via _migrate_v14_to_v15; existing runtime_calls/edges/imports
+# rows are preserved.
+# v14 (1.97.0): adds runtime_calls/runtime_edges/runtime_imports/
+# runtime_unmapped/runtime_redaction_log tables for Phase 0+ trace
+# ingestion. Empty until import_runtime_signal runs.
 # v13 (1.96.0): manifest gains `source_roots: list[str]` — the list of
 # git-root-relative subdir prefixes that have been walked into this
 # index. With v1.96 subdir merging, `index ./packages` then `index
@@ -30,7 +39,7 @@ logger = logging.getLogger(__name__)
 # relative to the indexed subdir (not the git root); they are
 # detected as old-format on first v1.96 indexing run and discarded
 # in favour of a fresh git-root-rooted walk.
-INDEX_VERSION = 14
+INDEX_VERSION = 15
 
 
 @functools.lru_cache(maxsize=16)

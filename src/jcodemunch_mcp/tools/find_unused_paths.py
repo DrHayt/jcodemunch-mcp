@@ -1,4 +1,4 @@
-"""find_unused_paths — symbols reachable on paper but never executed (Phase 3).
+"""find_unused_paths — symbols reachable on paper but never executed (Phase 3 + 4).
 
 Distinct from ``find_dead_code`` (static-only graph reachability) — this
 tool only flags code that has *runtime evidence of absence*: zero hits
@@ -7,6 +7,15 @@ runtime hits but zero static callers is dead by both definitions; a
 symbol with no runtime hits but plenty of static callers is the
 interesting "looks reachable, never runs" finding only this tool can
 surface.
+
+**Phase 4 addition.** When the index has dbt-style column metadata
+(``dbt_columns`` / ``sqlmesh_columns`` in context_metadata) and the
+``runtime_columns`` table has at least one row, results gain a
+``unused_columns`` list per dbt-model symbol — declared columns that
+never appeared in any ingested SQL log. The model itself only counts
+as ``unused`` when (a) the model symbol has zero hits in runtime_calls
+AND (b) every declared column also has zero hits in runtime_columns,
+since a model used solely for one column is still load-bearing.
 
 Excludes test files and entry-point heuristics by default — unused tests
 aren't "dead" and main/__init__/wsgi/etc. are entry points the runtime
@@ -21,13 +30,15 @@ Returns:
           {
               'symbol_id', 'name', 'kind', 'file', 'line',
               'last_seen': '' if never observed,
-              'reason': 'no_runtime_evidence' | 'stale_only',
+              'reason': 'no_runtime_evidence' | 'stale_only' | 'dbt_model_no_column_reads',
+              'unused_columns'?: [<col>, ...],   # Phase 4: dbt-only
           },
           ...
       ],
       'total_unused': N,
       '_meta': {timing_ms, total_symbols_scanned, excluded_test_files,
-                excluded_entry_points, runtime_data_present, ...}
+                excluded_entry_points, runtime_data_present,
+                runtime_columns_present, ...}
   }``
 
 When no traces have been ingested at all, ``results`` is empty and
@@ -37,6 +48,7 @@ trivially "unused" otherwise, which would mislead the agent.
 
 from __future__ import annotations
 
+import json
 import sqlite3
 import time
 from datetime import datetime, timedelta, timezone
@@ -45,6 +57,45 @@ from typing import Optional
 from ._utils import resolve_repo
 from .find_dead_code import _is_test_file, _is_entry_point_filename
 from ..storage import IndexStore
+
+
+def _load_declared_columns(conn: sqlite3.Connection) -> dict[str, set[str]]:
+    """Return ``{model_name: {col_name, ...}}`` from any ``*_columns``
+    provider in context_metadata. Empty dict when no dbt/SQLMesh metadata
+    exists. Used by the Phase 4 dbt-aware code path."""
+    row = conn.execute(
+        "SELECT value FROM meta WHERE key = 'context_metadata'"
+    ).fetchone()
+    if not row or not row[0]:
+        return {}
+    try:
+        ctx = json.loads(row[0])
+    except (TypeError, ValueError):
+        return {}
+    out: dict[str, set[str]] = {}
+    if not isinstance(ctx, dict):
+        return out
+    for key, value in ctx.items():
+        if not key.endswith("_columns") or not isinstance(value, dict):
+            continue
+        for model_name, cols in value.items():
+            if not isinstance(cols, dict):
+                continue
+            out.setdefault(model_name, set()).update(cols.keys())
+    return out
+
+
+def _load_observed_columns(conn: sqlite3.Connection, cutoff: str) -> dict[str, set[str]]:
+    """Return ``{model_name: {col_name, ...}}`` from ``runtime_columns``,
+    filtered to rows last seen at or after ``cutoff``."""
+    out: dict[str, set[str]] = {}
+    for r in conn.execute(
+        "SELECT model_name, column_name FROM runtime_columns WHERE last_seen >= ?",
+        (cutoff,),
+    ):
+        if r[0]:
+            out.setdefault(r[0], set()).add(r[1])
+    return out
 
 
 def find_unused_paths(
@@ -96,6 +147,15 @@ def find_unused_paths(
         runtime_present = (
             conn.execute("SELECT 1 FROM runtime_calls LIMIT 1").fetchone() is not None
         )
+        # Phase 4: also detect runtime_columns presence — used for the dbt-aware
+        # path. The table is only consulted when at least one row exists.
+        try:
+            columns_present = (
+                conn.execute("SELECT 1 FROM runtime_columns LIMIT 1").fetchone() is not None
+            )
+        except sqlite3.OperationalError:
+            # Index is on a pre-v15 schema (table doesn't exist yet)
+            columns_present = False
         if not runtime_present:
             return {
                 "repo": f"{owner}/{name}",
@@ -139,8 +199,17 @@ def find_unused_paths(
             (cutoff,),
         ).fetchall()
 
+        # Phase 4: when both dbt-style metadata and runtime_columns data exist,
+        # attach unused_columns per .sql model symbol. A model with at least
+        # one column observed is *not* unused even if the model symbol itself
+        # never appeared in runtime_calls (some pipelines log per-column reads
+        # without a wrapping symbol-level signal).
+        declared_cols = _load_declared_columns(conn) if columns_present else {}
+        observed_cols = _load_observed_columns(conn, cutoff) if columns_present else {}
+
         excluded_tests = 0
         excluded_entry_points = 0
+        rescued_by_column_hit = 0
         results: list[dict] = []
         for r in rows:
             file_path = r["file"] or ""
@@ -151,16 +220,44 @@ def find_unused_paths(
                 excluded_entry_points += 1
                 continue
             last_seen_raw = r["last_seen_raw"]
-            reason = "no_runtime_evidence" if last_seen_raw is None else "stale_only"
-            results.append({
+            sym_name = r["name"] or ""
+            sym_kind = r["kind"] or ""
+
+            # Phase 4 dbt-aware rescue: a SQL-file symbol with column reads
+            # is *not* unused even if no symbol-level runtime hit landed.
+            unused_columns_list: Optional[list[str]] = None
+            if (
+                columns_present
+                and file_path.endswith(".sql")
+                and sym_name in declared_cols
+            ):
+                declared = declared_cols[sym_name]
+                observed = observed_cols.get(sym_name, set())
+                if observed:
+                    rescued_by_column_hit += 1
+                    continue  # at least one column was read — model is in use
+                # No column reads at all — surface every declared column as unused.
+                unused_columns_list = sorted(declared)
+
+            if unused_columns_list:
+                reason = "dbt_model_no_column_reads"
+            elif last_seen_raw is None:
+                reason = "no_runtime_evidence"
+            else:
+                reason = "stale_only"
+
+            entry: dict = {
                 "symbol_id": r["symbol_id"],
-                "name": r["name"],
-                "kind": r["kind"],
+                "name": sym_name,
+                "kind": sym_kind,
                 "file": file_path,
                 "line": r["line"],
                 "last_seen": last_seen_raw or "",
                 "reason": reason,
-            })
+            }
+            if unused_columns_list is not None:
+                entry["unused_columns"] = unused_columns_list
+            results.append(entry)
             if len(results) >= max_results:
                 break
 
@@ -181,11 +278,16 @@ def find_unused_paths(
             "total_symbols_scanned": total_scanned,
             "excluded_test_files": excluded_tests,
             "excluded_entry_points": excluded_entry_points,
+            "rescued_by_column_hit": rescued_by_column_hit,
             "runtime_data_present": True,
+            "runtime_columns_present": columns_present,
             "truncated": len(results) >= max_results,
             "tip": (
                 "no_runtime_evidence = never observed in any ingested trace. "
                 "stale_only = observed before --since-days cutoff. "
+                "dbt_model_no_column_reads = SQL model whose declared columns "
+                "have zero hits in runtime_columns over the window — the "
+                "data-layer counterpart of dead code. "
                 "Pair with find_dead_code for the static-graph view: symbols here "
                 "AND in find_dead_code are dead by both definitions; symbols here "
                 "BUT NOT in find_dead_code are reachable on paper but never run — "

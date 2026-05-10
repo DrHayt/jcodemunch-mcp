@@ -391,11 +391,13 @@ def test_import_runtime_signal_rejects_unknown_source(tmp_path):
 
 
 def test_import_runtime_signal_rejects_phase4_sources(tmp_path):
+    """Phase 4 enabled source='sql_log'; only stack_log/apm remain unimplemented.
+    Test name retained for git-blame stability."""
     from jcodemunch_mcp.tools.import_runtime_signal import import_runtime_signal
 
     store, db_path = _seed_index_with_symbols(tmp_path)
     result = import_runtime_signal(
-        source="sql_log",
+        source="stack_log",
         path=str(tmp_path / "x.jsonl"),
         repo="local/phase1",
         storage_path=str(tmp_path),

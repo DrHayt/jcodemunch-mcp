@@ -2,6 +2,69 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [Unreleased] — Phase 4: SQL query log ingest
+
+Adds a second runtime signal source alongside OTel: pg_stat_statements
+CSV exports and generic SQL JSON-Lines logs. Maps each query to the
+indexed dbt/SQLMesh model symbols by referenced table, and records
+per-column reads against the existing `dbt_columns` / `sqlmesh_columns`
+context metadata. Closes the data-layer gap in the trace ingestion
+roadmap. INDEX_VERSION 14 → 15 with additive migration.
+
+- **New schema**: `runtime_columns(model_name, column_name, source,
+  count, first_seen, last_seen)` table + two indexes
+  (`idx_runtime_columns_model`, `idx_runtime_columns_last_seen`).
+  Existing `runtime_calls` / `runtime_edges` / `runtime_imports` /
+  `runtime_unmapped` / `runtime_redaction_log` rows are preserved by
+  the v14→v15 in-place migration.
+- **New parser** at `runtime/sql_log.py`: handles pg_stat_statements
+  CSV exports (header detection — accepts both `total_time` /
+  `total_exec_time` / `mean_time` / `mean_exec_time` aliases for
+  Postgres-version compatibility), generic SQL JSON-Lines, top-level
+  JSON arrays, comment-prefixed lines, and `.gz` transparently. Pure
+  parsing; no DB writes.
+- **Reference extraction**: regex-based — table refs from FROM / JOIN /
+  INSERT INTO / UPDATE / DELETE FROM / MERGE INTO; column refs from
+  qualified `alias.col` plus bare identifiers in SELECT / WHERE / ON /
+  HAVING / GROUP BY / ORDER BY blocks. Schema-qualified names
+  (`analytics.fact_orders`) keep only the trailing identifier so they
+  match dbt model names. Tolerates quoted identifiers.
+- **New ingest orchestrator** `runtime/sql_ingest.py`:
+  parse → redact → resolve → upsert. Read-only resolver metadata
+  snapshot covers file-stem map (`.sql` files), exact-name map, and
+  declared dbt columns. Writer connection takes the runtime_calls /
+  runtime_columns / runtime_unmapped / runtime_redaction_log upserts
+  in one transaction; FIFO eviction trims all three runtime tables.
+- **`import_runtime_signal({source: 'sql_log', path: '...'})`**:
+  Phase 4 wires the second source into the existing MCP tool. Returns
+  the OTel-shaped envelope plus a new `columns_recorded` field.
+  CLI: `jcodemunch-mcp import-trace --sql-log <path>` mirrors the
+  existing `--otel` flag; supplying both is rejected.
+- **`find_unused_paths` dbt-aware extension**: when the index has
+  `dbt_columns`-style metadata AND `runtime_columns` has rows, the
+  tool now (a) rescues SQL-file model symbols that have at least one
+  observed column read (column-only audit-log shape), and (b) surfaces
+  models whose declared columns have zero hits with
+  `reason='dbt_model_no_column_reads'` plus an `unused_columns: [...]`
+  list. `_meta` gains `runtime_columns_present` and
+  `rescued_by_column_hit` counts.
+- **Redaction**: every SQL log query routes through the same
+  `redact_trace_record()` chokepoint; `sql_string_literal`,
+  `sql_numeric_param`, `email_address`, `ipv4_address`, and the
+  shared secrets registry all fire and tally into
+  `runtime_redaction_log` with `source='sql_log'`.
+- **Tests**: 26 new tests in `tests/test_runtime_phase4.py` covering
+  the parser (CSV + JSONL + .gz + array fallback + comment lines +
+  malformed line tolerance), reference extraction (FROM/JOIN/UPDATE/
+  DELETE/INSERT, schema qualifiers, quoted identifiers, keyword
+  filtering), end-to-end ingest (mapped + unmapped, idempotency,
+  column metadata gating, redaction firing), and `find_unused_paths`
+  integration (dbt model surfacing + column-only rescue). 4114 passed,
+  7 skipped.
+
+Phase 5 (stack-frame ingest) lands next; Phase 4 + 5 ship together as
+v1.98.0 per roadmap.
+
 ## [1.97.1] — 2026-05-10 — Phase 3: runtime analytics tools
 
 Three new MCP tools that turn the runtime tables (Phase 0-2) into
