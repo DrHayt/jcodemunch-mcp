@@ -533,7 +533,7 @@ class TestIndexVersioning:
         )
 
         assert index.index_version == INDEX_VERSION
-        assert index.index_version == 12
+        assert index.index_version == 13
 
     def test_load_preserves_version(self, tmp_path):
         store = IndexStore(base_path=str(tmp_path))

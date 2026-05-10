@@ -216,10 +216,11 @@ class TestIndexFolderIdentity:
         assert loaded is not None
         assert loaded.git_root == str(repo.resolve())
 
-    def test_subdir_index_after_root_index_refuses_with_v196_hint(self, tmp_path):
-        # v1.95.1 regression guard: indexing a subdir of an already-indexed
-        # clone would silently overwrite the root index until v1.96 ships
-        # subdir merge. Refuse with a clear error pointing at workarounds.
+    def test_subdir_index_after_root_index_re_walks_under_git_root(self, tmp_path):
+        # v1.96: previously v1.95.1 refused; v1.96 merges. After indexing
+        # the whole repo then `index ./packages/thing`, the result is one
+        # `elastic/kibana` index whose source_files include the originally
+        # walked root files plus the subdir files (paths git-root-relative).
         repo = tmp_path / "kibana"
         repo.mkdir()
         _git("init", cwd=repo)
@@ -229,21 +230,24 @@ class TestIndexFolderIdentity:
         sub.mkdir(parents=True)
         (sub / "x.py").write_text("def x(): pass\n", encoding="utf-8")
 
-        store = tmp_path / "store"
-        first = index_folder(str(repo), use_ai_summaries=False, storage_path=str(store))
+        store_path = tmp_path / "store"
+        first = index_folder(str(repo), use_ai_summaries=False, storage_path=str(store_path))
         assert first["success"] is True
 
-        second = index_folder(str(sub), use_ai_summaries=False, storage_path=str(store))
-        assert second["success"] is False
-        # Mentions both the existing source_root and the v1.96 / opt-out path
-        assert str(repo.resolve()) in second["error"]
-        assert "v1.96" in second["error"]
-        assert "git_root_identity" in second["error"]
+        second = index_folder(str(sub), use_ai_summaries=False, storage_path=str(store_path))
+        assert second["success"] is True
+        assert second["repo"] == "elastic/kibana"
 
-    def test_two_subdirs_of_same_clone_refuse_second(self, tmp_path):
+        store = IndexStore(base_path=str(store_path))
+        loaded = store.load_index("elastic", "kibana")
+        assert loaded is not None
+        # Both files present, paths git-root-relative.
+        assert "main.py" in loaded.source_files
+        assert "packages/thing/x.py" in loaded.source_files
+
+    def test_two_subdirs_of_same_clone_merge(self, tmp_path):
         # Bamieh's exact workflow: `index ./packages` then `index ./scripts`
-        # from the same clone both resolve to `elastic/kibana`. The second
-        # would wipe the first under raw v1.95.0; v1.95.1 refuses.
+        # from the same clone now coalesce into one `elastic/kibana` index.
         repo = tmp_path / "kibana"
         repo.mkdir()
         _git("init", cwd=repo)
@@ -255,14 +259,23 @@ class TestIndexFolderIdentity:
         scripts.mkdir()
         (scripts / "s.py").write_text("def s(): pass\n", encoding="utf-8")
 
-        store = tmp_path / "store"
-        first = index_folder(str(packages), use_ai_summaries=False, storage_path=str(store))
+        store_path = tmp_path / "store"
+        first = index_folder(str(packages), use_ai_summaries=False, storage_path=str(store_path))
         assert first["success"] is True
+        assert first["repo"] == "elastic/kibana"
 
-        second = index_folder(str(scripts), use_ai_summaries=False, storage_path=str(store))
-        assert second["success"] is False
-        assert str(packages.resolve()) in second["error"]
-        assert str(scripts.resolve()) in second["error"]
+        second = index_folder(str(scripts), use_ai_summaries=False, storage_path=str(store_path))
+        assert second["success"] is True
+        assert second["repo"] == "elastic/kibana"
+
+        store = IndexStore(base_path=str(store_path))
+        loaded = store.load_index("elastic", "kibana")
+        assert loaded is not None
+        # Both subdirs' files present, git-root-relative.
+        assert "packages/p.py" in loaded.source_files
+        assert "scripts/s.py" in loaded.source_files
+        # source_roots records both walks.
+        assert sorted(loaded.source_roots) == ["packages", "scripts"]
 
     def test_reindex_same_subdir_succeeds(self, tmp_path):
         # The refuse must NOT fire when the user re-indexes the same subdir
@@ -281,10 +294,11 @@ class TestIndexFolderIdentity:
         second = index_folder(str(repo), use_ai_summaries=False, storage_path=str(store))
         assert second["success"] is True
 
-    def test_subdir_under_no_origin_repo_keeps_v194_behavior(self, tmp_path):
-        # Without an origin remote, identity falls back to local/<basename>-<hash>
-        # per subdir, so `index ./a` and `index ./b` get DIFFERENT identities
-        # and the refuse never fires. v1.94 behavior preserved.
+    def test_subdir_under_no_origin_repo_merges_via_git_root(self, tmp_path):
+        # v1.96: even without an origin remote, two subdirs of the same git
+        # working tree share identity (`local/<git_root_basename>-<hash>`)
+        # and merge.  v1.95 gave them different per-subdir identities; that
+        # behavior is no longer accessible without `git_root_identity: false`.
         repo = tmp_path / "internal-tool"
         repo.mkdir()
         _git("init", cwd=repo)  # no origin set
@@ -295,13 +309,20 @@ class TestIndexFolderIdentity:
         b.mkdir()
         (b / "g.py").write_text("def b(): pass\n", encoding="utf-8")
 
-        store = tmp_path / "store"
-        first = index_folder(str(a), use_ai_summaries=False, storage_path=str(store))
+        store_path = tmp_path / "store"
+        first = index_folder(str(a), use_ai_summaries=False, storage_path=str(store_path))
         assert first["success"] is True
-
-        second = index_folder(str(b), use_ai_summaries=False, storage_path=str(store))
+        second = index_folder(str(b), use_ai_summaries=False, storage_path=str(store_path))
         assert second["success"] is True
-        assert first["repo"] != second["repo"]
+        # Same identity (git_root-derived).
+        assert first["repo"] == second["repo"]
+
+        owner, name = first["repo"].split("/", 1)
+        store = IndexStore(base_path=str(store_path))
+        loaded = store.load_index(owner, name)
+        assert loaded is not None
+        assert "a/f.py" in loaded.source_files
+        assert "b/g.py" in loaded.source_files
 
     def test_collision_detection_blocks_second_working_tree(self, tmp_path):
         repo_a = tmp_path / "kibana-a"
@@ -324,3 +345,172 @@ class TestIndexFolderIdentity:
         assert second["success"] is False
         assert "already exists" in second["error"]
         assert str(repo_a.resolve()) in second["error"]
+
+
+class TestSubdirMerge:
+    """v1.96: merge logic for `index <subdir>` against an existing index
+    of the same git working tree.  Files outside `walk_prefix` carry over;
+    files inside it are replaced by the fresh walk."""
+
+    def _set_origin(self, repo: Path, url: str) -> None:
+        _set_origin(repo, url)
+
+    def _make_repo(self, tmp_path: Path, name: str, origin: str) -> Path:
+        repo = tmp_path / name
+        repo.mkdir()
+        _git("init", cwd=repo)
+        _set_origin(repo, origin)
+        return repo
+
+    def test_reindex_subdir_replaces_only_that_prefix(self, tmp_path):
+        # First walk indexes both packages and scripts via `index .`.
+        # Then re-index `./packages` after editing one of its files;
+        # the scripts files must remain untouched in the merged index.
+        repo = self._make_repo(tmp_path, "kibana", "https://github.com/elastic/kibana.git")
+        packages = repo / "packages"
+        packages.mkdir()
+        (packages / "p1.py").write_text("def p1(): pass\n", encoding="utf-8")
+        (packages / "p2.py").write_text("def p2(): pass\n", encoding="utf-8")
+        scripts = repo / "scripts"
+        scripts.mkdir()
+        (scripts / "s.py").write_text("def s(): pass\n", encoding="utf-8")
+
+        store_path = tmp_path / "store"
+        index_folder(str(repo), use_ai_summaries=False, storage_path=str(store_path))
+
+        # Edit one packages file, drop the other.
+        (packages / "p1.py").write_text("def p1_new(): pass\n", encoding="utf-8")
+        (packages / "p2.py").unlink()
+
+        result = index_folder(str(packages), use_ai_summaries=False, storage_path=str(store_path))
+        assert result["success"] is True
+
+        store = IndexStore(base_path=str(store_path))
+        loaded = store.load_index("elastic", "kibana")
+        assert loaded is not None
+        # scripts/s.py carried over despite not being walked this time.
+        assert "scripts/s.py" in loaded.source_files
+        # packages/p1.py replaced (still present); p2.py gone (dropped from walk).
+        assert "packages/p1.py" in loaded.source_files
+        assert "packages/p2.py" not in loaded.source_files
+        # New symbol from edited p1.py picked up.
+        new_p1_symbol = next(
+            (s for s in loaded.symbols if s.get("file") == "packages/p1.py"),
+            None,
+        )
+        assert new_p1_symbol is not None
+        assert new_p1_symbol.get("name") == "p1_new"
+
+    def test_full_root_walk_after_subdir_replaces_everything(self, tmp_path):
+        # Index ./packages first, then index . (the git root). The full
+        # walk replaces everything (no carryover, walk_prefix == "").
+        repo = self._make_repo(tmp_path, "kibana", "https://github.com/elastic/kibana.git")
+        packages = repo / "packages"
+        packages.mkdir()
+        (packages / "p.py").write_text("def p(): pass\n", encoding="utf-8")
+        (repo / "main.py").write_text("def main(): pass\n", encoding="utf-8")
+
+        store_path = tmp_path / "store"
+        index_folder(str(packages), use_ai_summaries=False, storage_path=str(store_path))
+        index_folder(str(repo), use_ai_summaries=False, storage_path=str(store_path))
+
+        store = IndexStore(base_path=str(store_path))
+        loaded = store.load_index("elastic", "kibana")
+        assert loaded is not None
+        # Full walk picks up both files.
+        assert "main.py" in loaded.source_files
+        assert "packages/p.py" in loaded.source_files
+        # source_roots is the full-walk marker.
+        assert loaded.source_roots == [""]
+
+    def test_disjoint_subdirs_both_present_after_merge(self, tmp_path):
+        repo = self._make_repo(tmp_path, "kibana", "https://github.com/elastic/kibana.git")
+        a = repo / "packages" / "alpha"
+        a.mkdir(parents=True)
+        (a / "ax.py").write_text("def ax(): pass\n", encoding="utf-8")
+        b = repo / "scripts" / "build"
+        b.mkdir(parents=True)
+        (b / "bx.py").write_text("def bx(): pass\n", encoding="utf-8")
+
+        store_path = tmp_path / "store"
+        index_folder(str(a), use_ai_summaries=False, storage_path=str(store_path))
+        index_folder(str(b), use_ai_summaries=False, storage_path=str(store_path))
+
+        store = IndexStore(base_path=str(store_path))
+        loaded = store.load_index("elastic", "kibana")
+        assert loaded is not None
+        assert "packages/alpha/ax.py" in loaded.source_files
+        assert "scripts/build/bx.py" in loaded.source_files
+        # source_roots tracks both walks (deeper-than-one paths preserved).
+        assert sorted(loaded.source_roots) == ["packages/alpha", "scripts/build"]
+
+    def test_v195_legacy_index_is_rebuilt(self, tmp_path):
+        # Simulate a v1.95-format index where source_root is a subdir
+        # (not the git root). v1.96 should detect the mismatch, log a
+        # warning, and rebuild fresh against the current walk rather than
+        # producing a corrupted merge.
+        from jcodemunch_mcp.parser.symbols import Symbol
+
+        repo = self._make_repo(tmp_path, "kibana", "https://github.com/elastic/kibana.git")
+        scripts = repo / "scripts"
+        scripts.mkdir()
+        (scripts / "s.py").write_text("def s(): pass\n", encoding="utf-8")
+
+        store_path = tmp_path / "store"
+        store = IndexStore(base_path=str(store_path))
+        # Hand-craft a v1.95-format manifest: source_root = the SUBDIR,
+        # not the git root.  File path "p.py" is subdir-relative.
+        store.save_index(
+            owner="elastic", name="kibana",
+            source_files=["p.py"],
+            symbols=[Symbol(
+                id="p.py::p#function", file="p.py", name="p",
+                qualified_name="p", kind="function", language="python",
+                signature="def p()", line=1, end_line=1,
+                byte_offset=0, byte_length=12, content_hash="x",
+            )],
+            raw_files={}, languages={"python": 1},
+            source_root=str(repo / "packages"),  # legacy: subdir, not git root
+            git_root=str(repo),
+        )
+
+        # Re-run with v1.96 logic — should rebuild rather than merge.
+        result = index_folder(str(scripts), use_ai_summaries=False, storage_path=str(store_path))
+        assert result["success"] is True
+        warnings_text = " ".join(result.get("warnings", []))
+        assert "v1.95" in warnings_text or "subdir-relative" in warnings_text
+
+        loaded = store.load_index("elastic", "kibana")
+        assert loaded is not None
+        # The legacy `p.py` is gone (rebuilt fresh under git-root paths).
+        assert "p.py" not in loaded.source_files
+        # The fresh walk's file is present at the git-root-relative path.
+        assert "scripts/s.py" in loaded.source_files
+
+    def test_opt_out_preserves_v194_per_subdir_indexes(self, tmp_path, monkeypatch):
+        # `git_root_identity: false` keeps each subdir its own
+        # local/<basename>-<hash> index — no merge, v1.94 behavior.
+        from jcodemunch_mcp import config as config_module
+        monkeypatch.setattr(
+            config_module, "get",
+            lambda key, default=None, repo=None:
+                False if key == "git_root_identity" else default,
+        )
+
+        repo = self._make_repo(tmp_path, "kibana", "https://github.com/elastic/kibana.git")
+        a = repo / "a"
+        a.mkdir()
+        (a / "f.py").write_text("def a(): pass\n", encoding="utf-8")
+        b = repo / "b"
+        b.mkdir()
+        (b / "g.py").write_text("def b(): pass\n", encoding="utf-8")
+
+        store_path = tmp_path / "store"
+        first = index_folder(str(a), use_ai_summaries=False, storage_path=str(store_path))
+        second = index_folder(str(b), use_ai_summaries=False, storage_path=str(store_path))
+        assert first["success"] is True
+        assert second["success"] is True
+        # Different per-subdir identities (no merge).
+        assert first["repo"] != second["repo"]
+        assert first["repo"].startswith("local/a-")
+        assert second["repo"].startswith("local/b-")

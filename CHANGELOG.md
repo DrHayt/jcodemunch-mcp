@@ -2,6 +2,71 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.96.0] — 2026-05-10 — Subdir merge for monorepo workflows (#288 phase 2)
+
+Closes [#288](https://github.com/jgravelle/jcodemunch-mcp/issues/288).
+v1.95 made the storage identity git-root-aware so a clone of
+`elastic/kibana` indexes as `elastic/kibana`.  v1.96 makes that identity
+*useful* for the workflow the issue was filed against: indexing
+different subdirs of one clone now coalesces into one repo index.
+
+```
+cd ~/work/kibana
+jcodemunch-mcp index ./packages
+jcodemunch-mcp index ./scripts
+# -> one elastic/kibana index whose source_files contains both
+#    "packages/p.py" and "scripts/s.py", paths git-root-relative
+```
+
+### What changed
+
+* `index_folder` now retargets `folder_path` to the git root when one is
+  detected; only `walk_root` (the user-passed subdir) is walked.  All
+  file paths in the resulting index are git-root-relative.
+* When an existing v1.96-format index already covers the same git root,
+  files outside `walk_prefix` carry over and the fresh walk's data
+  unions with them.  Re-indexing one subdir replaces only that prefix;
+  every other subdir's files survive.
+* A full-root walk (`index .`) supersedes any earlier subdir slices —
+  `source_roots` becomes `[""]` and stale subdir entries drop.
+* `CodeIndex` gains `source_roots: list[str]` listing the git-root-relative
+  prefixes that have been walked.  `INDEX_VERSION` bumped 12 → 13.
+
+### v1.95 indexes are rebuilt fresh on first v1.96 indexing
+
+v1.95 stored file paths relative to whatever subdir the user pointed
+at.  Mixing those into a git-root-relative merge would silently produce
+inconsistent paths.  v1.96 detects the legacy format (existing index's
+`source_root` ≠ `git_root`), drops it with a warning, and rebuilds
+under the new scheme.  No silent corruption, but you'll need to re-run
+each subdir-index command you previously used so they merge into the
+new index.
+
+### Opt-out preserved
+
+`git_root_identity: false` (or `JCODEMUNCH_GIT_ROOT_IDENTITY=0`) keeps
+the v1.94 per-subdir `local/<basename>-<hash>` identities.  No git-root
+detection, no merge, no retarget.
+
+### Known limitations (deferred)
+
+* Ancestor `.gitignore` files outside `walk_root` aren't applied to
+  the walk.  Subdir-level `.gitignore` files inside the walk continue
+  to work normally.
+* `context_metadata` merge is a shallow overlay — provider-specific
+  per-file data may be lost on key overlap.  Revisit if a specific
+  provider surfaces a bug.
+* Branch-delta indexing on a non-base branch falls through the merge
+  path; subdir merging on a feature branch is unverified.
+
+### Tests
+
+4001 passed, 7 skipped (5 new in `TestSubdirMerge`):
+re-index-subdir replaces only that prefix; full-root walk after subdir
+replaces everything; disjoint deeper subdirs both present after merge;
+v1.95 legacy index is rebuilt rather than corrupted; opt-out preserves
+per-subdir identities.
+
 ## [1.95.1] — 2026-05-10 — Hot-fix: refuse subdir overwrite under shared git-root identity
 
 v1.95.0 introduced a regression for the exact workflow [#288](https://github.com/jgravelle/jcodemunch-mcp/issues/288)

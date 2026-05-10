@@ -21,15 +21,16 @@ from .sqlite_store import SQLiteIndexStore, _VERIFIED_PATHS
 logger = logging.getLogger(__name__)
 
 # Bump this when the index schema changes in an incompatible way.
-# v12 (1.95.0): manifest gains `git_root` — the absolute path of the
-# enclosing git working tree, when one is detected at index time. Indexes
-# created from a local git clone now use the GitHub `owner/repo` identity
-# (when an `origin` remote is configured) instead of the folder basename,
-# so a clone of `elastic/kibana` indexes as `elastic/kibana` regardless of
-# the local directory name. Old v11 indexes lack `git_root` and load fine
-# with an empty default; identity is set at *create* time, so a fresh
-# re-index is needed if you want the new naming.
-INDEX_VERSION = 12
+# v13 (1.96.0): manifest gains `source_roots: list[str]` — the list of
+# git-root-relative subdir prefixes that have been walked into this
+# index. With v1.96 subdir merging, `index ./packages` then `index
+# ./scripts` from one clone coalesce into a single `elastic/kibana`
+# index whose `source_roots` is `["packages", "scripts"]` and whose
+# file paths are git-root-relative.  v12 indexes had file paths
+# relative to the indexed subdir (not the git root); they are
+# detected as old-format on first v1.96 indexing run and discarded
+# in favour of a fresh git-root-rooted walk.
+INDEX_VERSION = 13
 
 
 @functools.lru_cache(maxsize=16)
@@ -115,7 +116,8 @@ class CodeIndex:
     git_head: str = ""           # HEAD commit hash at index time (for git repos)
     file_summaries: dict[str, str] = field(default_factory=dict)  # file_path -> summary
     source_root: str = ""        # Absolute source root for local indexes, empty for remote
-    git_root: str = ""           # Absolute git working tree root when detected (v1.95+); foundation for v1.96 subdir merging
+    git_root: str = ""           # Absolute git working tree root when detected (v1.95+); anchor for v1.96 subdir merging
+    source_roots: list[str] = field(default_factory=list)  # v1.96+: git-root-relative subdir prefixes walked into this index ([""] = full git-root walk)
     file_languages: dict[str, str] = field(default_factory=dict)  # file_path -> language
     display_name: str = ""       # User-facing name (for local hashed repo IDs)
     imports: Optional[dict[str, list[dict]]] = None  # file_path -> [{specifier, names}]; None = not indexed yet (pre-v1.3.0)
@@ -529,6 +531,7 @@ class IndexStore:
         file_mtimes: Optional[dict[str, int]] = None,
         package_names: Optional[list[str]] = None,
         git_root: str = "",
+        source_roots: Optional[list[str]] = None,
     ) -> "CodeIndex":
         """Save index via SQLite backend."""
         # Validate owner/name for path separators (before any slug computation)
@@ -559,6 +562,7 @@ class IndexStore:
             imports=imports, context_metadata=context_metadata,
             file_blob_shas=file_blob_shas, file_mtimes=file_mtimes,
             package_names=package_names, git_root=git_root,
+            source_roots=source_roots,
         )
 
         # Clean up any legacy JSON now that data is safely in SQLite.

@@ -121,7 +121,7 @@ _NON_REPO_DB_FILES = frozenset({"telemetry.db"})
 # Keys stored in the meta table
 _META_KEYS = [
     "repo", "owner", "name", "indexed_at", "index_version",
-    "git_head", "source_root", "git_root", "display_name",
+    "git_head", "source_root", "git_root", "source_roots", "display_name",
     "languages", "context_metadata",
 ]
 
@@ -138,6 +138,23 @@ def _ensure_index_store_deps() -> None:
         from .index_store import INDEX_VERSION, _file_hash as _fh
         _INDEX_VERSION = INDEX_VERSION
         _file_hash = _fh
+
+
+def _safe_json_load_list(raw: str) -> list[str]:
+    """Decode a JSON-encoded list[str] from meta, returning [] on any error.
+
+    Old indexes (v12 and earlier) wrote no `source_roots` row, so the meta
+    read returns the default "[]" we hand it. New indexes write a real
+    JSON array. Anything malformed (truncated/corrupted) degrades to []
+    rather than crashing the load path.
+    """
+    try:
+        value = json.loads(raw or "[]")
+    except (TypeError, ValueError):
+        return []
+    if not isinstance(value, list):
+        return []
+    return [v for v in value if isinstance(v, str)]
 
 
 # ── In-memory CodeIndex cache ──────────────────────────────────────
@@ -793,6 +810,7 @@ class SQLiteIndexStore:
             file_summaries=composed_summaries,
             source_root=base_index.source_root,
             git_root=getattr(base_index, "git_root", "") or "",
+            source_roots=list(getattr(base_index, "source_roots", []) or []),
             file_languages=composed_languages,
             display_name=base_index.display_name,
             imports=composed_imports,
@@ -847,6 +865,7 @@ class SQLiteIndexStore:
         file_mtimes: Optional[dict[str, int]] = None,
         package_names: Optional[list[str]] = None,
         git_root: str = "",
+        source_roots: Optional[list[str]] = None,
     ) -> "CodeIndex":
         """Save a full index to SQLite. Replaces all existing data."""
         _ensure_index_store_deps()
@@ -894,6 +913,7 @@ class SQLiteIndexStore:
             file_summaries=file_summaries or {},
             source_root=source_root,
             git_root=git_root,
+            source_roots=source_roots or [],
             file_languages=file_languages,
             display_name=display_name or name,
             imports=imports if imports is not None else {},
@@ -1855,6 +1875,7 @@ class SQLiteIndexStore:
             file_summaries=new_file_summaries,
             source_root=old.source_root,
             git_root=getattr(old, "git_root", "") or "",
+            source_roots=list(getattr(old, "source_roots", []) or []),
             file_languages=new_file_languages,
             display_name=old.display_name,
             imports=new_imports,
@@ -1942,6 +1963,7 @@ class SQLiteIndexStore:
             file_summaries=file_summaries,
             source_root=meta.get("source_root", ""),
             git_root=meta.get("git_root", ""),
+            source_roots=_safe_json_load_list(meta.get("source_roots", "[]")),
             file_languages=file_languages,
             display_name=meta.get("display_name", name),
             imports=imports,
@@ -1964,6 +1986,7 @@ class SQLiteIndexStore:
             "git_head": index.git_head,
             "source_root": index.source_root,
             "git_root": getattr(index, "git_root", "") or "",
+            "source_roots": json.dumps(getattr(index, "source_roots", []) or []),
             "display_name": index.display_name,
             "languages": json.dumps(index.languages),
             "context_metadata": json.dumps(index.context_metadata or {}),
@@ -2113,6 +2136,7 @@ class SQLiteIndexStore:
                 "git_head": data.get("git_head", ""),
                 "source_root": data.get("source_root", ""),
                 "git_root": data.get("git_root", ""),
+                "source_roots": json.dumps(data.get("source_roots", []) or []),
                 "display_name": data.get("display_name", name),
                 "languages": json.dumps(computed_languages),
                 "context_metadata": json.dumps(data.get("context_metadata", {})),
