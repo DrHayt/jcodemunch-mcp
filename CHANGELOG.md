@@ -2,6 +2,69 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.104.0] — 2026-05-10 — `find_implementations` + `check_delete_safe`: F-15 Serena parity
+
+Closes two real gaps against [Serena](https://github.com/oraios/serena) — concrete-impl
+discovery and deletion preflight — both built F-15-style with classification,
+confidence scoring, and recommended-action surfaces beyond Serena's bicycle versions.
+
+### `find_implementations` (new tool, Relationships tier)
+
+Four-channel resolution with confidence per result:
+
+| Channel | Confidence | Source |
+|---|---|---|
+| LSP dispatch | 1.0 | `enrichment/lsp_bridge.py` `dispatch_edges` |
+| AST class hierarchy | 0.85 | `_build_class_maps` subclass walk |
+| Duck-typed | 0.65 | matching-name methods with no declared inheritance |
+| Decorator handler | 0.45 | `@route`, `@cli.command`, signal/event handlers |
+
+Per-impl classification: `subclass_override`, `interface_impl`, `duck_typed`,
+`decorator_handler`, `subclass`. Ranked by confidence then PageRank × byte_length.
+`differs_by` breakdown attaches body-size / param / callee-overlap deltas vs. the
+target — same idea as `find_similar_symbols`. Optional `cross_repo=true` discovers
+impls in other indexed repos via the package registry.
+
+### `check_delete_safe` (new tool, Impact & Safety tier)
+
+Composite preflight that fuses five signals into a single verdict:
+
+- `find_importers(cross_repo=true)` — files importing the target's file
+- `check_references` — text-level identifier references (duck-typed callers)
+- `find_dead_code` — confidence score the symbol is unreachable
+- Runtime traces (Phase 7) — `runtime_calls` hit count for the symbol_id
+- Entry-point heuristics — decorator patterns (`@route`, `@cli.command`),
+  name patterns (`main`, `__main__`, `run`, `serve`, `cli`)
+
+Eight verdict tiers, most-restrictive first:
+`runtime_observed` → `entry_point` → `cross_repo_blocking` →
+`external_uses_blocking` → `internal_uses_blocking` → `test_coverage_only` →
+`internal_only` → `safe_to_delete`.
+
+Top-5 blockers sorted by severity (1–5 scale), per-signal counts in `signals`,
+and a one-line `recommended_action` per verdict so agents get a concrete next
+step, not just yes/no. Read-only — never mutates the codebase.
+
+### Why F-15, not bicycle
+
+- **Serena's `find_implementations`** returns a list. Ours: classified, confidence-scored,
+  ranked, with divergence breakdown and optional cross-repo coverage.
+- **Serena's `safe_delete`** (mutating) verifies refs before deleting. Ours (`check_delete_safe`,
+  read-only): fuses five signals including runtime evidence, classifies into 8 tiers, surfaces
+  the specific blockers + recommended action, and lets the agent apply the deletion via
+  native Edit/Write — keeping us in our read-only design.
+
+### Tier registration
+
+- **Standard tier**: both tools included alongside `check_rename_safe`.
+- **Full tier** (default): `find_implementations` in Relationships group, `check_delete_safe`
+  in Impact & Safety group.
+
+### Tests
+
+23 new tests (10 for `find_implementations`, 13 for `check_delete_safe`).
+Full suite at 4227 passed, 7 skipped.
+
 ## [1.103.0] — 2026-05-10 — `get_group_contracts`: F-15 cross-repo API surface
 
 Closes the one feature GitNexus's `group_contracts` Pro-tier multi-repo tool

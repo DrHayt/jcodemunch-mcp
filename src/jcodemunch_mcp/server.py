@@ -58,9 +58,11 @@ _CANONICAL_TOOL_NAMES: tuple[str, ...] = (
     "get_dependency_graph", "get_class_hierarchy", "get_related_symbols",
     "get_call_hierarchy",
     # Impact & Safety
-    "get_blast_radius", "check_rename_safe", "get_impact_preview",
-    "get_changed_symbols", "plan_refactoring", "get_symbol_provenance",
-    "get_pr_risk_profile",
+    "get_blast_radius", "check_rename_safe", "check_delete_safe",
+    "get_impact_preview", "get_changed_symbols", "plan_refactoring",
+    "get_symbol_provenance", "get_pr_risk_profile",
+    # Symbol navigation
+    "find_implementations",
     # Architecture
     "get_dependency_cycles", "get_coupling_metrics", "get_layer_violations",
     "get_extraction_candidates", "get_cross_repo_map", "get_group_contracts",
@@ -123,9 +125,11 @@ _TOOL_TIER_STANDARD: frozenset[str] = _TOOL_TIER_CORE | frozenset({
     "check_references", "get_dependency_graph",
     "get_class_hierarchy", "get_related_symbols", "get_call_hierarchy",
     # Impact & Safety
-    "get_blast_radius", "check_rename_safe",
+    "get_blast_radius", "check_rename_safe", "check_delete_safe",
     "get_impact_preview", "get_changed_symbols", "get_symbol_diff",
     "get_symbol_provenance", "get_pr_risk_profile",
+    # Symbol navigation
+    "find_implementations",
     # Quality & Metrics
     "get_symbol_complexity", "get_churn_rate", "get_hotspots",
     "get_symbol_importance", "get_repo_map", "find_dead_code", "get_dead_code_v2",
@@ -2136,6 +2140,95 @@ def _build_tools_list() -> list[Tool]:
             },
         ),
         Tool(
+            name="check_delete_safe",
+            description=(
+                "Composite preflight: can this symbol be deleted safely? Combines find_importers "
+                "(cross-repo), check_references, find_dead_code confidence, runtime evidence "
+                "(Phase 7 traces when available), and entry-point heuristics into a single verdict + "
+                "one-line recommended_action. Verdict tiers: safe_to_delete / test_coverage_only / "
+                "internal_only / internal_uses_blocking / external_uses_blocking / cross_repo_blocking "
+                "/ runtime_observed / entry_point. Top-5 blockers ranked by severity. Read-only — "
+                "never mutates the codebase."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "repo": {"type": "string", "description": "Repository identifier"},
+                    "symbol": {
+                        "type": "string",
+                        "description": "Symbol ID or name to evaluate for deletion safety.",
+                    },
+                    "cross_repo": {
+                        "type": "boolean",
+                        "description": "Include other indexed repos in the analysis (default true).",
+                        "default": True,
+                    },
+                    "include_runtime": {
+                        "type": "boolean",
+                        "description": "Consult runtime_calls for production evidence (default true).",
+                        "default": True,
+                    },
+                },
+                "required": ["repo", "symbol"],
+            },
+        ),
+        Tool(
+            name="find_implementations",
+            description=(
+                "Find concrete implementations of an interface, abstract class, or method. "
+                "Multi-source resolution with confidence scoring: LSP dispatch (1.0), AST class "
+                "hierarchy (0.85), duck-typed name match (0.65), decorator handler (0.45). "
+                "Classifies each impl (subclass_override / interface_impl / duck_typed / "
+                "decorator_handler / subclass), ranks by PageRank × byte_length, attaches "
+                "differs_by breakdown. Optional cross_repo=true surfaces impls in other indexed "
+                "repos via the package registry. Closes Serena's find_implementations gap."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "repo": {"type": "string", "description": "Repository identifier"},
+                    "symbol": {
+                        "type": "string",
+                        "description": "Symbol ID or name of the interface/abstract/method to analyse.",
+                    },
+                    "relationship_kinds": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": (
+                            "Optional whitelist: subclass_override, interface_impl, duck_typed, "
+                            "decorator_handler, subclass. Defaults to all."
+                        ),
+                    },
+                    "include_subclasses": {
+                        "type": "boolean",
+                        "description": "Walk class hierarchy for class-kind targets (default true).",
+                        "default": True,
+                    },
+                    "cross_repo": {
+                        "type": "boolean",
+                        "description": "Also search other indexed repos via the package registry (default false).",
+                        "default": False,
+                    },
+                    "rank_by_importance": {
+                        "type": "boolean",
+                        "description": "Sort by confidence then PageRank × byte_length (default true).",
+                        "default": True,
+                    },
+                    "max_results": {
+                        "type": "integer",
+                        "description": "Cap on returned implementations (default 50).",
+                        "default": 50,
+                    },
+                    "token_budget": {
+                        "type": "integer",
+                        "description": "Hard cap on response payload (default 4000).",
+                        "default": 4000,
+                    },
+                },
+                "required": ["repo", "symbol"],
+            },
+        ),
+        Tool(
             name="plan_refactoring",
             description=(
                 "Generate edit-ready refactoring instructions for renaming, moving, extracting, or "
@@ -4058,6 +4151,34 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                     storage_path=storage_path,
                 )
             )
+        elif name == "check_delete_safe":
+            from .tools.check_delete_safe import check_delete_safe
+            result = await asyncio.to_thread(
+                functools.partial(
+                    check_delete_safe,
+                    repo=arguments["repo"],
+                    symbol=arguments["symbol"],
+                    cross_repo=arguments.get("cross_repo", True),
+                    include_runtime=arguments.get("include_runtime", True),
+                    storage_path=storage_path,
+                )
+            )
+        elif name == "find_implementations":
+            from .tools.find_implementations import find_implementations
+            result = await asyncio.to_thread(
+                functools.partial(
+                    find_implementations,
+                    repo=arguments["repo"],
+                    symbol=arguments["symbol"],
+                    relationship_kinds=arguments.get("relationship_kinds"),
+                    include_subclasses=arguments.get("include_subclasses", True),
+                    cross_repo=arguments.get("cross_repo", False),
+                    rank_by_importance=arguments.get("rank_by_importance", True),
+                    max_results=arguments.get("max_results", 50),
+                    token_budget=arguments.get("token_budget", 4000),
+                    storage_path=storage_path,
+                )
+            )
         elif name == "plan_refactoring":
             from .tools.plan_refactoring import plan_refactoring
             result = await asyncio.to_thread(
@@ -5213,8 +5334,9 @@ def _generate_claude_md_snippet(missing_only: bool = False) -> str:
                                  "get_ranked_context"]),
         ("Relationships", ["find_importers", "find_references", "check_references",
                            "get_dependency_graph", "get_class_hierarchy",
-                           "get_related_symbols", "get_call_hierarchy"]),
-        ("Impact & Safety", ["get_blast_radius", "check_rename_safe",
+                           "get_related_symbols", "get_call_hierarchy",
+                           "find_implementations"]),
+        ("Impact & Safety", ["get_blast_radius", "check_rename_safe", "check_delete_safe",
                               "get_impact_preview", "get_changed_symbols",
                               "plan_refactoring", "get_symbol_provenance",
                               "get_pr_risk_profile"]),
