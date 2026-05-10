@@ -216,6 +216,13 @@ def append_run(
         return history[0]
 
     radar = health.get("radar") or {}
+    radar_axes = radar.get("axes") or {}
+    # Phase 7: presence of the runtime_coverage axis signals whether the
+    # repo has any ingested runtime evidence at all. The axis is omitted
+    # for repos that haven't run import_runtime_signal — never penalised,
+    # just flagged so the leaderboard can distinguish empirical scores
+    # from purely-static ones.
+    has_runtime_evidence = "runtime_coverage" in radar_axes
     record = {
         "timestamp": _dt.datetime.now(_dt.timezone.utc).isoformat(),
         "sha": sha,
@@ -224,9 +231,10 @@ def append_run(
         "composite": float(radar.get("composite", 0.0) or 0.0),
         "total_files": int(health.get("total_files", 0) or 0),
         "total_symbols": int(health.get("total_symbols", 0) or 0),
+        "runtime_evidence": has_runtime_evidence,
         "axes": {
             axis: round(float(d.get("score", 0.0) or 0.0), 1)
-            for axis, d in (radar.get("axes") or {}).items()
+            for axis, d in radar_axes.items()
         },
     }
     history.insert(0, record)
@@ -284,6 +292,7 @@ def run_pipeline(config: ObservatoryConfig) -> dict:
             "sha": sha,
             "grade": record["grade"],
             "composite": record["composite"],
+            "runtime_evidence": record.get("runtime_evidence", False),
             "elapsed_s": elapsed_s,
         })
 

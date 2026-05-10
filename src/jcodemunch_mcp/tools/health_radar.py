@@ -102,6 +102,19 @@ def _score_churn_surface(top_hotspot_score: float) -> float:
     return 0.0
 
 
+def _score_runtime_coverage(coverage_pct: float) -> float:
+    """Phase 7 axis: runtime coverage as a healthy-by-default axis.
+
+    Direct linear mapping — 100% of declared call edges have runtime
+    evidence over the look-back window → 100. 0% → 0. The axis is only
+    meaningful when at least one trace has been ingested; callers that
+    don't pass a value get the axis omitted entirely (same convention as
+    test_gap / churn_surface) so the composite is still comparable
+    against pre-Phase-7 baselines.
+    """
+    return _clamp(coverage_pct)
+
+
 def _letter_grade(composite: float) -> str:
     """A/B/C/D/F by 10-point bands. Borderline values round up (a 79.99 is C+, 80.00 is B)."""
     if composite >= 90:
@@ -124,8 +137,9 @@ def compute_radar(
     total_files: int,
     untested_pct: Optional[float] = None,
     top_hotspot_score: Optional[float] = None,
+    runtime_coverage_pct: Optional[float] = None,
 ) -> dict:
-    """Compute the six-axis radar from raw signal inputs.
+    """Compute the six- (or seven-) axis radar from raw signal inputs.
 
     Args:
         avg_complexity: Mean cyclomatic complexity across functions/methods.
@@ -144,6 +158,12 @@ def compute_radar(
             composite). Most callers will pass 100.0 - reached_pct.
         top_hotspot_score: Top-1 hotspot score (complexity × log(1 + churn)).
             None => churn_surface axis returns score=None.
+        runtime_coverage_pct: Phase 7 — percentage of declared call edges
+            with runtime evidence over the window. None => axis omitted
+            (preserves bit-for-bit comparability with pre-Phase-7
+            baselines on repos that haven't ingested traces). Most
+            callers will pass the value computed by
+            ``get_runtime_coverage``.
 
     Returns:
         ``{axes: {axis: {score, raw}}, composite, grade, omitted_axes}``
@@ -184,6 +204,14 @@ def compute_radar(
         }
     else:
         omitted.append("churn_surface")
+
+    if runtime_coverage_pct is not None:
+        axes["runtime_coverage"] = {
+            "score": _score_runtime_coverage(runtime_coverage_pct),
+            "raw": runtime_coverage_pct,
+        }
+    else:
+        omitted.append("runtime_coverage")
 
     scored_values = [a["score"] for a in axes.values()]
     composite = round(sum(scored_values) / len(scored_values), 1) if scored_values else 0.0

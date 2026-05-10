@@ -222,6 +222,25 @@ def get_repo_health(
         except (TypeError, ValueError):
             top_hotspot_score = None
 
+    # Phase 7: optional 7th radar axis — runtime_coverage. Sourced from
+    # get_runtime_coverage so the same coverage_pct that a caller would
+    # see via the dedicated tool is what feeds the radar. Failures
+    # (missing index column, no traces, pre-v14 DB) just leave the axis
+    # omitted — the composite then aggregates over the existing 6.
+    runtime_coverage_pct: Optional[float] = None
+    try:
+        from .get_runtime_coverage import get_runtime_coverage
+        rc = get_runtime_coverage(
+            repo=f"{owner}/{name}",
+            storage_path=storage_path,
+        )
+        if "error" not in rc:
+            sources = rc.get("sources") or []
+            if sources:
+                runtime_coverage_pct = float(rc.get("coverage_pct", 0))
+    except Exception:
+        pass
+
     from .health_radar import compute_radar
     radar = compute_radar(
         avg_complexity=avg_complexity,
@@ -231,6 +250,7 @@ def get_repo_health(
         total_files=coupling_total,  # production-code denominator
         untested_pct=untested_pct,
         top_hotspot_score=top_hotspot_score,
+        runtime_coverage_pct=runtime_coverage_pct,
     )
 
     elapsed = (time.perf_counter() - t0) * 1000

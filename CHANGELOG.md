@@ -2,6 +2,114 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [2.0.0] — 2026-05-10 — Phase 7: runtime-aware PR risk (milestone capstone)
+
+The reason this whole milestone existed. An agent reviewing a PR can now
+distinguish *"you're touching code that runs 1M times/day in prod"* from
+*"you're touching code that has run zero times this quarter."* Static
+call graph + runtime evidence = decisions agents can defend.
+
+This is a **major version bump** because the health radar gains a
+seventh axis and ``get_pr_risk_profile`` adopts a six-signal weighting
+regime when traces have been ingested. Both changes are
+backwards-compatible for callers that haven't enabled runtime trace
+ingestion: the axis is omitted, the score uses the historical
+five-signal mix, output shapes stay identical bit-for-bit.
+
+### `get_pr_risk_profile` runtime weighting
+
+- New signal: ``runtime_traffic`` — 0..1 score derived from the log of
+  per-symbol runtime hit count averaged across the changed symbols.
+  ``log1p(1M)`` maps to a runtime score of 1.0; quieter symbols get a
+  proportional fraction.
+- New flag: ``runtime_dark_code_introduced`` — True when the PR adds
+  symbols whose file has zero runtime evidence at all. Either the new
+  code is unreachable, or the trace coverage has a blind spot — both
+  warrant review before merging.
+- New field: ``runtime_dark_code_files`` — the actual file list, capped
+  at 5 in the human-readable recommendation.
+- **Two weight regimes**:
+  * Static-only (no traces): five signals summing to 1.0 — historical
+    behaviour preserved bit-for-bit.
+  * Runtime-aware (traces present): six signals summing to 1.0; the
+    five static weights are scaled by 0.85 to make room for a 0.15
+    runtime weight.
+- Reads from both ``runtime_calls`` and ``runtime_stack_events`` so a
+  symbol's hit count includes both happy-path traffic and error frames.
+- Read-only / immutable connection — never bumps WAL mtime, never evicts
+  the LRU cache.
+
+### Health radar 7th axis: ``runtime_coverage``
+
+- ``compute_radar`` accepts a new ``runtime_coverage_pct`` keyword
+  argument. When provided, it surfaces as a 7th axis with a linear
+  0..100 score.
+- ``get_repo_health`` populates the value via ``get_runtime_coverage``;
+  failures (no traces, missing column, pre-v14 DB) leave the axis
+  omitted so the composite stays comparable against pre-Phase-7
+  baselines.
+- ``diff_health_radar`` is axis-agnostic and surfaces the new axis
+  automatically — no changes needed.
+- Existing six-axis tests updated to reflect the new
+  ``omitted_axes: ['runtime_coverage']`` default.
+
+### Observatory runtime-evidence column
+
+- ``append_run`` records ``runtime_evidence: bool`` per run based on
+  whether the radar carries a ``runtime_coverage`` axis.
+- The leaderboard tile shows a small ``live`` badge next to repos that
+  have ingested traces. Hidden when False to keep the index page clean.
+- Index page caption updated: "Six-axis radar (plus an optional seventh
+  axis when runtime evidence is available)".
+
+### Versioning rationale
+
+This is the **milestone capstone** — Phases 0-6 built the runtime
+ingest infrastructure (schemas, parsers, orchestrators, HTTP endpoint,
+redaction chokepoint, MCP tools); Phase 7 closes the loop by feeding
+that data back into the agent's risk assessment. Bumping to v2.0.0
+signals the runtime-aware era; the v1.x line stays static-only.
+
+### Tests
+
+15 new tests in ``tests/test_runtime_phase7.py`` covering:
+
+- Health radar with / without ``runtime_coverage_pct``.
+- ``_score_runtime_coverage`` linear mapping + clamping.
+- Composite drops when runtime axis is low (validates "empirical
+  evidence at low coverage scores worse than static-only").
+- ``diff_radar`` picks up the new axis automatically.
+- ``_runtime_traffic_score`` aggregates correctly (zero on empty,
+  monotonic in hits, average not max).
+- ``_load_runtime_signal_for_changed`` behaviour (false when no data,
+  true when present, combines runtime_calls + runtime_stack_events).
+- Static-only and runtime-aware weights both sum to exactly 1.0.
+- Observatory ``append_run`` flips ``runtime_evidence`` correctly.
+
+One pre-existing test (``test_healthy_repo_grades_high``) updated to
+reflect that ``runtime_coverage`` is now in the default-omitted set.
+
+Suite at 4165 passed, 7 skipped.
+
+### Total milestone footprint (Phases 0-7)
+
+- 6 new SQLite tables: ``runtime_calls`` / ``runtime_edges`` /
+  ``runtime_imports`` / ``runtime_unmapped`` / ``runtime_redaction_log``
+  (Phase 0); ``runtime_columns`` (Phase 4); ``runtime_stack_events``
+  (Phase 5).
+- 4 ingest sources wired: OTel (Phase 1), SQL log (Phase 4), stack log
+  (Phase 5), HTTP live (Phase 6); 1 reserved (apm).
+- 5 new MCP tools: ``import_runtime_signal``, ``get_runtime_coverage``,
+  ``find_hot_paths``, ``find_unused_paths``, ``get_redaction_log``.
+- 6 existing tools enriched: ``search_symbols`` / ``get_symbol_source``
+  / ``find_references`` / ``get_blast_radius`` / ``get_call_hierarchy``
+  carry per-result ``_runtime_confidence`` (Phase 2);
+  ``get_symbol_provenance`` carries optional ``stack_frequency`` block
+  (Phase 5); ``get_pr_risk_profile`` and ``get_repo_health`` are
+  runtime-aware (Phase 7).
+- INDEX_VERSION 13 → 16 over three additive in-place migrations.
+- ~3,000 LOC + 6 new test files (~115 new tests).
+
 ## [1.99.0] — 2026-05-10 — Phase 6: HTTP live-ingest endpoint
 
 Adds an opt-in HTTP transport endpoint so production systems can ship

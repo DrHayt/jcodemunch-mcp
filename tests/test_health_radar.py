@@ -107,8 +107,10 @@ class TestComputeRadar:
         )
         assert out["composite"] >= 90
         assert out["grade"] == "A"
-        assert out["omitted_axes"] == []
-        # All 6 axes present.
+        # Phase 7 introduced the optional runtime_coverage axis; when the
+        # caller doesn't pass runtime_coverage_pct, the axis is omitted.
+        # All other six axes remain present.
+        assert out["omitted_axes"] == ["runtime_coverage"]
         assert set(out["axes"].keys()) == {
             "complexity", "dead_code", "cycles", "coupling", "test_gap", "churn_surface",
         }
