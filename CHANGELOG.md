@@ -2,24 +2,18 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
-## [2.0.1] — 2026-05-10 — Phase 7: runtime-aware PR risk (milestone capstone)
-
-(v2.0.0 was minted locally but the filename had been used by a previous
-yanked release — PyPI doesn't allow filename reuse. Re-cut as v2.0.1
-with no other changes.)
-
+## [1.100.0] — 2026-05-10 — Phase 7: runtime-aware PR risk (milestone capstone)
 
 The reason this whole milestone existed. An agent reviewing a PR can now
 distinguish *"you're touching code that runs 1M times/day in prod"* from
 *"you're touching code that has run zero times this quarter."* Static
 call graph + runtime evidence = decisions agents can defend.
 
-This is a **major version bump** because the health radar gains a
-seventh axis and ``get_pr_risk_profile`` adopts a six-signal weighting
-regime when traces have been ingested. Both changes are
-backwards-compatible for callers that haven't enabled runtime trace
-ingestion: the axis is omitted, the score uses the historical
-five-signal mix, output shapes stay identical bit-for-bit.
+The release is fully **backwards-compatible**: callers without ingested
+traces see the historical six-axis radar and the historical five-signal
+PR risk mix, bit-for-bit. The new behaviour activates only after
+runtime data lands. (An earlier draft uploaded as v2.0.1 has been
+superseded by this v1.100.0 release; the v1.x major line continues.)
 
 ### `get_pr_risk_profile` runtime weighting
 
@@ -72,8 +66,9 @@ five-signal mix, output shapes stay identical bit-for-bit.
 This is the **milestone capstone** — Phases 0-6 built the runtime
 ingest infrastructure (schemas, parsers, orchestrators, HTTP endpoint,
 redaction chokepoint, MCP tools); Phase 7 closes the loop by feeding
-that data back into the agent's risk assessment. Bumping to v2.0.0
-signals the runtime-aware era; the v1.x line stays static-only.
+that data back into the agent's risk assessment. Stays on the v1.x
+line as a minor; the change is additive — pre-Phase-7 callers see no
+behavioural difference.
 
 ### Tests
 
