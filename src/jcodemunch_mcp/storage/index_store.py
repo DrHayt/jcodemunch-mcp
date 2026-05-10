@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 # relative to the indexed subdir (not the git root); they are
 # detected as old-format on first v1.96 indexing run and discarded
 # in favour of a fresh git-root-rooted walk.
-INDEX_VERSION = 13
+INDEX_VERSION = 14
 
 
 @functools.lru_cache(maxsize=16)

@@ -660,7 +660,56 @@ def get_session_stats(base_path: Optional[str] = None) -> dict:
             model: round(total_tokens * rate, 4)
             for model, rate in PRICING.items()
         },
+        "runtime_signal": _runtime_signal_summary(base_path),
     }
+
+
+def _runtime_signal_summary(base_path: Optional[str] = None) -> dict:
+    """Cheap probe of the runtime_* tables across all per-repo databases.
+
+    Returns ``{"rows": N, "by_source": {source: count}}``. Phase 0 always
+    returns zeroes (no ingest yet); the field exists so Phase 1+ can fill
+    it without changing the response shape.
+
+    Errors are logged at DEBUG and yield zeroes — never block stats.
+    """
+    import sqlite3 as _sqlite3
+    summary = {"rows": 0, "by_source": {}}
+    try:
+        root = Path(base_path) if base_path else Path.home() / ".code-index"
+        if not root.exists():
+            return summary
+        # Skip non-repo files (telemetry.db, config.jsonc, etc.)
+        non_repo = {"telemetry.db"}
+        total = 0
+        by_source: dict[str, int] = {}
+        for db_path in root.glob("*.db"):
+            if db_path.name in non_repo:
+                continue
+            try:
+                conn = _sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+                conn.row_factory = _sqlite3.Row
+                # Skip dbs that don't have the runtime_calls table yet
+                row = conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' AND name='runtime_calls'"
+                ).fetchone()
+                if row is None:
+                    conn.close()
+                    continue
+                rows = conn.execute(
+                    "SELECT source, COALESCE(SUM(count), 0) AS n FROM runtime_calls GROUP BY source"
+                ).fetchall()
+                for r in rows:
+                    by_source[r["source"]] = by_source.get(r["source"], 0) + int(r["n"])
+                    total += int(r["n"])
+                conn.close()
+            except _sqlite3.Error:
+                logger.debug("Runtime signal probe failed on %s", db_path, exc_info=True)
+        summary["rows"] = total
+        summary["by_source"] = by_source
+    except Exception:
+        logger.debug("Runtime signal summary failed", exc_info=True)
+    return summary
 
 
 def get_total_saved(base_path: Optional[str] = None) -> int:

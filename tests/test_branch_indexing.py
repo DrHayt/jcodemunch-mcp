@@ -449,11 +449,13 @@ class TestMigrationV8ToV9:
             assert "branch_deltas" in tables
             assert "branch_meta" in tables
 
-            # Verify version was updated
+            # Verify version was updated. The migration chain runs all
+            # subsequent migrations as well (v8→v9 is followed by v13→v14),
+            # so the final version is the current INDEX_VERSION.
             version = conn.execute(
                 "SELECT value FROM meta WHERE key='index_version'"
             ).fetchone()[0]
-            assert version == "9"
+            assert version == str(INDEX_VERSION)
         finally:
             conn.close()
 

@@ -96,6 +96,58 @@ CREATE TABLE IF NOT EXISTS branch_meta (
     indexed_at TEXT,
     base_head  TEXT
 );
+
+CREATE TABLE IF NOT EXISTS runtime_calls (
+    symbol_id   TEXT NOT NULL,
+    source      TEXT NOT NULL,
+    count       INTEGER NOT NULL DEFAULT 0,
+    p50_ms      REAL,
+    p95_ms      REAL,
+    first_seen  TEXT,
+    last_seen   TEXT,
+    PRIMARY KEY (symbol_id, source)
+);
+
+CREATE INDEX IF NOT EXISTS idx_runtime_calls_last_seen ON runtime_calls(last_seen);
+
+CREATE TABLE IF NOT EXISTS runtime_edges (
+    caller_id   TEXT NOT NULL,
+    callee_id   TEXT NOT NULL,
+    source      TEXT NOT NULL,
+    count       INTEGER NOT NULL DEFAULT 0,
+    first_seen  TEXT,
+    last_seen   TEXT,
+    PRIMARY KEY (caller_id, callee_id, source)
+);
+
+CREATE INDEX IF NOT EXISTS idx_runtime_edges_callee ON runtime_edges(callee_id);
+
+CREATE TABLE IF NOT EXISTS runtime_imports (
+    import_id   TEXT NOT NULL,
+    source      TEXT NOT NULL,
+    count       INTEGER NOT NULL DEFAULT 0,
+    first_seen  TEXT,
+    last_seen   TEXT,
+    PRIMARY KEY (import_id, source)
+);
+
+CREATE TABLE IF NOT EXISTS runtime_unmapped (
+    file_path     TEXT,
+    line_no       INTEGER,
+    function_name TEXT,
+    source        TEXT NOT NULL,
+    count         INTEGER NOT NULL DEFAULT 0,
+    last_seen     TEXT,
+    PRIMARY KEY (file_path, line_no, function_name, source)
+);
+
+CREATE TABLE IF NOT EXISTS runtime_redaction_log (
+    source           TEXT NOT NULL,
+    pattern          TEXT NOT NULL,
+    redaction_count  INTEGER NOT NULL DEFAULT 0,
+    last_redacted    TEXT,
+    PRIMARY KEY (source, pattern)
+);
 """
 
 # Pragmas set on every connection open
@@ -344,6 +396,70 @@ def _migrate_v8_to_v9(conn: sqlite3.Connection) -> None:
     logger.info("Migrated v8→v9: added branch_deltas and branch_meta tables")
 
 
+def _migrate_v13_to_v14(conn: sqlite3.Connection) -> None:
+    """Migrate a v13 database to v14: add runtime_* tables for trace ingestion (Phase 0).
+
+    Tables are created empty; no existing rows are touched. Until a runtime
+    signal is ingested (Phase 1+), the tables stay empty and are zero-cost.
+    """
+    conn.executescript("""\
+        CREATE TABLE IF NOT EXISTS runtime_calls (
+            symbol_id   TEXT NOT NULL,
+            source      TEXT NOT NULL,
+            count       INTEGER NOT NULL DEFAULT 0,
+            p50_ms      REAL,
+            p95_ms      REAL,
+            first_seen  TEXT,
+            last_seen   TEXT,
+            PRIMARY KEY (symbol_id, source)
+        );
+        CREATE INDEX IF NOT EXISTS idx_runtime_calls_last_seen ON runtime_calls(last_seen);
+
+        CREATE TABLE IF NOT EXISTS runtime_edges (
+            caller_id   TEXT NOT NULL,
+            callee_id   TEXT NOT NULL,
+            source      TEXT NOT NULL,
+            count       INTEGER NOT NULL DEFAULT 0,
+            first_seen  TEXT,
+            last_seen   TEXT,
+            PRIMARY KEY (caller_id, callee_id, source)
+        );
+        CREATE INDEX IF NOT EXISTS idx_runtime_edges_callee ON runtime_edges(callee_id);
+
+        CREATE TABLE IF NOT EXISTS runtime_imports (
+            import_id   TEXT NOT NULL,
+            source      TEXT NOT NULL,
+            count       INTEGER NOT NULL DEFAULT 0,
+            first_seen  TEXT,
+            last_seen   TEXT,
+            PRIMARY KEY (import_id, source)
+        );
+
+        CREATE TABLE IF NOT EXISTS runtime_unmapped (
+            file_path     TEXT,
+            line_no       INTEGER,
+            function_name TEXT,
+            source        TEXT NOT NULL,
+            count         INTEGER NOT NULL DEFAULT 0,
+            last_seen     TEXT,
+            PRIMARY KEY (file_path, line_no, function_name, source)
+        );
+
+        CREATE TABLE IF NOT EXISTS runtime_redaction_log (
+            source           TEXT NOT NULL,
+            pattern          TEXT NOT NULL,
+            redaction_count  INTEGER NOT NULL DEFAULT 0,
+            last_redacted    TEXT,
+            PRIMARY KEY (source, pattern)
+        );
+    """)
+    conn.execute(
+        "INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)",
+        ("index_version", "14"),
+    )
+    logger.info("Migrated v13→v14: added runtime_* tables for trace ingestion")
+
+
 def _unlink_retry(path: Path, retries: int = 3, delay: float = 0.1) -> bool:
     """Delete a file with retry logic for Windows file-locking (PermissionError).
 
@@ -433,6 +549,8 @@ class SQLiteIndexStore:
                     _migrate_v7_to_v8(conn)
                 if stored_version < 9:
                     _migrate_v8_to_v9(conn)
+                if stored_version < 14:
+                    _migrate_v13_to_v14(conn)
 
             SQLiteIndexStore._initialized_dbs.add(db_key)
 

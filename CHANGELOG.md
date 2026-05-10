@@ -2,6 +2,43 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [unreleased] — Phase 0: trace-ingestion scaffold
+
+Foundation for runtime trace ingestion (roadmap [todo.md](../todo.md)).
+Ships nothing user-facing yet; unblocks Phase 1+ ingestion tools.
+
+- **INDEX_VERSION 13 → 14.** Existing v13 (and earlier v9–v12) databases
+  auto-migrate on first open via `_migrate_v13_to_v14()`; the migration is
+  idempotent and only adds tables (no existing rows touched).
+- **Five new SQLite tables**: `runtime_calls`, `runtime_edges`,
+  `runtime_imports`, `runtime_unmapped`, `runtime_redaction_log`. All
+  start empty; zero on-disk cost until Phase 1 begins ingest.
+- **New `jcodemunch_mcp.runtime` package**:
+  - `redact_trace_record(record, source) → (redacted, labels)` — single
+    chokepoint that strips PII (emails, IPv4, SQL literals, JSON value
+    blocks, Python locals reprs) and existing high-entropy secrets
+    (AWS/GCP/Azure/JWT/GitHub/Slack/PEM) before any storage call.
+  - `resolve_to_symbol_id(conn, file_path, line_no, function_name)` —
+    best-effort `(file, line, function)` → `symbol_id` resolver with
+    suffix-match fallback for absolute trace paths against repo-relative
+    index paths.
+  - `VALID_SOURCES = {'otel', 'sql_log', 'stack_log', 'apm'}`.
+- **New config keys**:
+  - `runtime_max_rows` (default 100,000) — env `JCODEMUNCH_RUNTIME_MAX_ROWS`.
+    Rolling cap for FIFO eviction once Phase 1 ships ingest.
+  - `runtime_redact_enabled` (default `true`) — env `JCODEMUNCH_RUNTIME_REDACT`.
+    Disabling permitted **only** for offline debugging on synthetic data.
+- **`get_session_stats` now reports `runtime_signal: {rows, by_source}`**.
+  Reads zero until Phase 1 ingest writes rows; non-zero readings prove
+  ingest happened. Cheap probe — only opens databases that already have
+  the runtime_calls table.
+- **Tests**: 21 new tests in `tests/test_runtime_phase0.py` covering
+  fresh v14 schema, v9→v14 migration chain, migration idempotency, the
+  redaction chokepoint (incl. nested-dict and list recursion), and the
+  resolver across exact / fallback-by-name / suffix-match / miss paths.
+
+No release tag; merges into main as foundation for the Phase 1 ingest tools.
+
 ## [1.96.2] — 2026-05-10 — `index` accepts full GitHub URLs + MCP-tool typo hints
 
 Closes [#289](https://github.com/jgravelle/jcodemunch-mcp/issues/289).

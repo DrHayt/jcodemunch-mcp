@@ -59,10 +59,10 @@ class TestIndexVersionBump:
     """INDEX_VERSION is bumped to 9."""
 
     def test_index_version_is_9(self):
-        """v1.96.0 bumped INDEX_VERSION to 13 for the new `source_roots`
-        manifest field (subdir merge for #288). Test name kept for
-        git-blame stability; assertion tracks the current value."""
-        assert INDEX_VERSION == 13
+        """v1.97.0 bumped INDEX_VERSION to 14 for the runtime_* trace
+        ingestion tables (Phase 0). Test name kept for git-blame
+        stability; assertion tracks the current value."""
+        assert INDEX_VERSION == 14
 
 
 class TestCallersByNameIndex:

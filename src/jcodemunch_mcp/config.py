@@ -38,6 +38,8 @@ ENV_VAR_MAPPING = {
     "JCODEMUNCH_SHARE_SAVINGS": "share_savings",
     "JCODEMUNCH_PERF_TELEMETRY": "perf_telemetry_enabled",
     "JCODEMUNCH_PERF_TELEMETRY_MAX_ROWS": "perf_telemetry_max_rows",
+    "JCODEMUNCH_RUNTIME_MAX_ROWS": "runtime_max_rows",
+    "JCODEMUNCH_RUNTIME_REDACT": "runtime_redact_enabled",
     "JCODEMUNCH_SUMMARIZER_CONCURRENCY": "summarizer_concurrency",
     "JCODEMUNCH_SUMMARIZER_MAX_FAILURES": "summarizer_max_failures",
     "JCODEMUNCH_ALLOW_REMOTE_SUMMARIZER": "allow_remote_summarizer",
@@ -368,6 +370,8 @@ DEFAULTS = {
     "share_savings": True,
     "perf_telemetry_enabled": False,
     "perf_telemetry_max_rows": 100_000,
+    "runtime_max_rows": 100_000,
+    "runtime_redact_enabled": True,
     "summarizer_concurrency": 4,
     "summarizer_max_failures": 3,
     "allow_remote_summarizer": False,
@@ -447,6 +451,8 @@ CONFIG_TYPES = {
     "share_savings": bool,
     "perf_telemetry_enabled": bool,
     "perf_telemetry_max_rows": int,
+    "runtime_max_rows": int,
+    "runtime_redact_enabled": bool,
     "summarizer_concurrency": int,
     "summarizer_max_failures": int,
     "allow_remote_summarizer": bool,
@@ -1591,6 +1597,14 @@ def generate_template() -> str:
   // "perf_telemetry_max_rows": 100000,
   //   Rolling cap on persisted perf rows; oldest rows trimmed in 1k batches
   //   once exceeded. Lower this on small disks or short-lived deployments.
+  // "runtime_max_rows": 100000,
+  //   Rolling cap on rows in the runtime_* tables (per-repo). Hits the cap →
+  //   FIFO eviction in 1k batches. Phase 0 ships the schema; Phase 1+ ships
+  //   the ingest tools that fill these tables.
+  // "runtime_redact_enabled": true,
+  //   Enforce PII redaction at the runtime trace ingest chokepoint. Set
+  //   false ONLY for offline debugging on synthetic data — never on
+  //   production traces.
   // "summarizer_concurrency": 4,
   //   Number of parallel threads for AI summarization.
   //   Higher = faster indexing but more API calls.
