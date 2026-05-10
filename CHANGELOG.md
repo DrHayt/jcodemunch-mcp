@@ -2,6 +2,21 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.93.1] — 2026-05-09 — Graceful watcher fallback when `watchfiles` extra is missing
+
+Closes [#281](https://github.com/jgravelle/jcodemunch-mcp/issues/281). When
+`watch: true` was set in `config.jsonc` but the optional `watchfiles`
+package was not installed, `serve` printed an error to stderr and called
+`sys.exit(1)` before the stdio MCP handshake completed. Codex (and any
+other stdio MCP client) saw a server that vanished before exposing tools,
+with no surfaced reason.
+
+Now: if `--watcher` was passed *explicitly* on the CLI, the hard-exit
+behavior is preserved (the user asked for the watcher and we respect that).
+If `watch` came from config or env, the server logs a warning and starts
+without the watcher, so the handshake completes and `mcp__jcodemunch__*`
+tools surface normally. Reported by @mdtrahan.
+
 ## [1.93.0] — 2026-05-09 — TypeScript barrel-aware import graph + dotted-name resolver fix
 
 Closes [#283](https://github.com/jgravelle/jcodemunch-mcp/issues/283).

@@ -6222,18 +6222,28 @@ def main(argv: Optional[list[str]] = None):
             args.freshness_mode = config_module.get("freshness_mode", "relaxed")
         set_freshness_mode(args.freshness_mode)
         watcher_enabled = _get_watcher_enabled(args)
+        watcher_from_cli = getattr(args, "watcher", None) is not None
 
         if watcher_enabled:
             try:
                 import watchfiles  # noqa: F401
             except ImportError:
-                print(
-                    "ERROR: --watcher requires watchfiles. "
-                    "Install with: pip install 'jcodemunch-mcp[watch]'",
-                    file=sys.stderr,
+                if watcher_from_cli:
+                    print(
+                        "ERROR: --watcher requires watchfiles. "
+                        "Install with: pip install 'jcodemunch-mcp[watch]'",
+                        file=sys.stderr,
+                    )
+                    sys.exit(1)
+                logger.warning(
+                    "watch is enabled in config but the 'watchfiles' "
+                    "package is not installed; continuing without the "
+                    "file watcher. Install with: pip install "
+                    "'jcodemunch-mcp[watch]'"
                 )
-                sys.exit(1)
+                watcher_enabled = False
 
+        if watcher_enabled:
             # Watcher params: CLI flag > config > default
             cfg_paths = config_module.get("watch_paths", [])
             if args.watcher_path is not None:

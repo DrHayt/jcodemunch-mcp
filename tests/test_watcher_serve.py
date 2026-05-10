@@ -200,6 +200,47 @@ class TestRunServerWithWatcher:
                 main(["serve", "--watcher"])
             assert exc_info.value.code == 1
 
+    def test_missing_watchfiles_with_config_watch_degrades_gracefully(self, tmp_path):
+        """When watch comes from config (not --watcher CLI flag) and watchfiles
+        is missing, the server must NOT exit — it must warn and start without
+        the watcher so the stdio MCP handshake can complete (issue #281)."""
+        from jcodemunch_mcp.server import main
+        from jcodemunch_mcp.config import get as real_get
+
+        import builtins
+        real_import = builtins.__import__
+
+        def blocking_import(name, *args, **kwargs):
+            if name == "watchfiles":
+                raise ImportError(f"No module named '{name}'")
+            return real_import(name, *args, **kwargs)
+
+        def mock_get(key, default=None):
+            if key == "watch":
+                return True
+            return real_get(key, default)
+
+        captured = []
+
+        def capturing_run(coro, *a, **kw):
+            captured.append(coro)
+
+        with patch.object(builtins, "__import__", side_effect=blocking_import), \
+             patch("jcodemunch_mcp.server.config_module.get", side_effect=mock_get), \
+             patch("jcodemunch_mcp.server.asyncio.run", side_effect=capturing_run):
+            try:
+                main(["serve"])
+            except SystemExit as e:
+                assert e.code in (None, 0), \
+                    f"server exited with {e.code} when it should have degraded gracefully"
+
+        assert len(captured) == 1, "server did not start a coroutine"
+        # Watcher wrapper coroutine name contains 'watcher'; degraded path
+        # should fall back to plain stdio server without that wrapper.
+        assert "watcher" not in captured[0].cr_code.co_name, \
+            "watcher should be skipped when watchfiles is unavailable"
+        captured[0].close()
+
 
 # ---------------------------------------------------------------------------
 # Task 2: Parse watcher flag (placeholder - implemented in server.py)
