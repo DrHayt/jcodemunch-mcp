@@ -371,9 +371,27 @@ Each tile links to the repo's full radar + history. RSS feeds available per-repo
 </html>
 """
     (output_dir / "index.html").write_text(page, encoding="utf-8")
-    # Mirror as JSON for downstream tooling.
+    # Mirror as JSON for downstream tooling.  Top-level metadata makes the
+    # artifact self-describing — verifiers can confirm which jcm version +
+    # INDEX_VERSION produced the run from the file alone, no workflow log
+    # cross-reference required.
+    try:
+        from .. import __version__ as _gen_version
+    except ImportError:
+        _gen_version = ""
+    try:
+        from ..storage.index_store import INDEX_VERSION as _gen_index_version
+    except ImportError:
+        _gen_index_version = 0
+    payload = {
+        "generator_version": _gen_version,
+        "index_version": _gen_index_version,
+        "built_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "summaries": ok_summaries,
+        "skipped": failed,
+    }
     (output_dir / "index.json").write_text(
-        json.dumps({"summaries": ok_summaries, "skipped": failed}, indent=2) + "\n",
+        json.dumps(payload, indent=2) + "\n",
         encoding="utf-8",
     )
 

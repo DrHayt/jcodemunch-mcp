@@ -222,6 +222,24 @@ class TestRenderIndexPage:
         assert "summaries" in payload
         assert payload["summaries"][0]["slug"] == "a--a"
 
+    def test_index_json_carries_self_describing_metadata(self, tmp_path: Path):
+        """v1.96.1: index.json embeds generator_version + index_version +
+        built_at so verifiers can confirm which jcm produced the run from
+        the artifact alone, no CI-log cross-reference required."""
+        from jcodemunch_mcp import __version__ as jcm_version
+        from jcodemunch_mcp.storage.index_store import INDEX_VERSION
+
+        summaries = [{"slug": "a--a", "label": "A", "status": "ok", "composite": 80.0, "grade": "B"}]
+        render.render_index_page(tmp_path, summaries)
+        payload = json.loads((tmp_path / "index.json").read_text(encoding="utf-8"))
+
+        assert payload.get("generator_version") == jcm_version
+        assert payload.get("index_version") == INDEX_VERSION
+        # built_at: ISO-8601 UTC, 'Z' suffix
+        built_at = payload.get("built_at", "")
+        assert built_at.endswith("Z")
+        assert "T" in built_at  # date 'T' time separator
+
 
 class TestIndexAndHealth:
     """Regression: get_repo_health must receive the indexed owner/name,

@@ -2,6 +2,29 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.96.1] — 2026-05-10 — Self-describing observatory `index.json`
+
+`jcodemunch-mcp observatory build` now embeds three top-level metadata
+fields in `index.json`:
+
+```json
+{
+  "generator_version": "1.96.1",
+  "index_version": 13,
+  "built_at": "2026-05-10T13:42:07Z",
+  "summaries": [...],
+  "skipped": [...]
+}
+```
+
+Verifiers can now confirm which jcm version + INDEX_VERSION produced a
+published observatory run from the artifact alone, without
+cross-referencing the CI workflow log.  Surfaced when checking that
+v1.96.0 actually shipped through the observatory pipeline; the run
+succeeded but `index.json` was silent on what produced it.
+
+No schema or behavior changes. Re-index not required.
+
 ## [1.96.0] — 2026-05-10 — Subdir merge for monorepo workflows (#288 phase 2)
 
 Closes [#288](https://github.com/jgravelle/jcodemunch-mcp/issues/288).
