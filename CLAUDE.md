@@ -2,8 +2,8 @@
 
 ## Current State
 - **Version:** 1.96.2 (published to PyPI; VS Code extension v0.2.0 live on marketplace)
-- **INDEX_VERSION:** 14 (Phase 0 trace-ingestion scaffold; runtime_* tables added; release pending Phase 1+2)
-- **Tests:** 4038 passed, 7 skipped (post-Phase 0)
+- **INDEX_VERSION:** 14 (Phase 0 + Phase 1 trace ingestion landed; release pending Phase 2)
+- **Tests:** 4059 passed, 7 skipped (post-Phase 1)
 - **Python:** >=3.10
 
 ## Key Files
@@ -81,9 +81,11 @@ src/jcodemunch_mcp/
     audit_agent_config.py    # audit_agent_config: token waste audit for CLAUDE.md, .cursorrules, etc.; cross-refs against index
     analyze_perf.py          # analyze_perf: per-tool latency telemetry (p50/p95/max/error_rate) + cache hit-rate; reads in-memory session ring or persistent telemetry.db (opt-in via perf_telemetry_enabled); compare_release="X" loads benchmarks/token_baselines/vX.json and adds baseline_diff
   runtime/
-    __init__.py          # Phase 0 scaffold for trace ingestion: re-exports redact_trace_record, resolve_to_symbol_id, VALID_SOURCES = {'otel','sql_log','stack_log','apm'}
+    __init__.py          # Trace ingestion package (Phases 0+1): re-exports redact_trace_record, resolve_to_symbol_id, parse_otel_file, ingest_otel_file, OtelSpan, VALID_SOURCES = {'otel','sql_log','stack_log','apm'}
     redact.py            # Single chokepoint redact_trace_record(record, source) — strips emails, IPv4, SQL literals/numerics, JSON value blocks, Python locals reprs, plus all secret patterns from ../redact.py
     resolve.py           # resolve_to_symbol_id(conn, file, line, name) — best-effort (file, line, function) → symbol_id with suffix-match fallback for absolute trace paths against repo-relative index paths
+    otel.py              # Phase 1 OTel JSON parser — handles JSON-Lines, single-document JSON, top-level array, and .gz transparently; extracts code.filepath / code.lineno / code.function / duration into OtelSpan
+    ingest.py            # Phase 1 orchestrator ingest_otel_file(db_path, file_path, redact_enabled, max_rows) — parse → redact → resolve → upsert; computes per-batch p50/p95 from span durations; FIFO-evicts runtime_calls + runtime_unmapped down to max_rows when exceeded; persists per-pattern redaction counts to runtime_redaction_log
   retrieval/
     confidence.py        # compute_confidence/attach_confidence: 0-1 retrieval confidence score (geometric mean of gap, strength, identity, freshness sub-signals); attached to _meta.confidence on search_symbols / plan_turn / get_ranked_context
     freshness.py         # FreshnessProbe: per-result _freshness classification (fresh / edited_uncommitted / stale_index); compares index SHA vs git HEAD + per-file mtime vs CodeIndex.file_mtimes; wired into search_symbols / get_symbol_source / get_context_bundle / get_ranked_context
@@ -105,6 +107,7 @@ src/jcodemunch_mcp/
 | `hook-event create\|remove` | Record a worktree lifecycle event (called by Claude Code hooks) |
 | `index [target]` | Index a local folder (default: `.`) or GitHub repo (`owner/repo`). One command, no init required |
 | `index-file <path>` | Re-index a single file within an existing indexed folder (used by PostToolUse hooks) |
+| `import-trace --otel <path> [--repo <id>] [--no-redact]` | (Phase 1) Ingest an OTel JSON / JSON-Lines / .gz trace file into the runtime_* tables. Maps spans to indexed symbols by `(code.filepath, code.lineno, code.function)`; redacts PII at the chokepoint by default. |
 | `config` | Print effective configuration grouped by concern |
 | `config --check` | Also validate prerequisites (storage writable, AI pkg installed, HTTP pkgs present) |
 | `config --upgrade` | Add missing keys from current template to existing config.jsonc, preserving user values |

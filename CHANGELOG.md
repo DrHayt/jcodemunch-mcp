@@ -2,10 +2,43 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
-## [unreleased] — Phase 0: trace-ingestion scaffold
+## [unreleased] — Phase 0 + Phase 1: trace ingestion (OTel JSON)
 
-Foundation for runtime trace ingestion (roadmap [todo.md](../todo.md)).
-Ships nothing user-facing yet; unblocks Phase 1+ ingestion tools.
+Foundation + first ingest channel for runtime trace ingestion (roadmap
+[todo.md](../todo.md)). Sealed for v1.97.0 once Phase 2 lands (runtime
+confidence on existing tool results).
+
+### Phase 1 — OTel JSON / JSON-Lines / .gz import
+
+- **New MCP tool `import_runtime_signal({source, path, repo, redact_enabled?})`**.
+  Parses an OTel trace file, redacts PII at the chokepoint, resolves spans
+  to indexed symbols via `(code.filepath, code.lineno, code.function)`,
+  and upserts into `runtime_calls` / `runtime_unmapped` /
+  `runtime_redaction_log`. Returns `{records, mapped, unmapped,
+  redactions_fired, unmapped_reasons, evicted}`. Phase 1 implements
+  `source='otel'`; `sql_log` / `stack_log` / `apm` land in Phase 4+.
+- **New CLI subcommand**: `jcodemunch-mcp import-trace --otel <path> [--repo <id>] [--no-redact]`.
+  Same surface; prints the result dict as JSON. `--no-redact` is intended
+  ONLY for offline debugging on synthetic data.
+- **OTel parser (`runtime/otel.py`)**: handles three shapes — JSON-Lines
+  (Collector `file` exporter default), single-document JSON, top-level
+  array — plus transparent `.gz` decompression.
+- **Ingest orchestrator (`runtime/ingest.py`)**: per-batch p50/p95
+  latency from `endTimeUnixNano - startTimeUnixNano`, FIFO eviction
+  down to `runtime_max_rows` when exceeded, and per-pattern redaction
+  accounting.
+- **Idempotency contract**: each ingest is **additive** — re-importing
+  the same file re-adds counts. Future `replace=True` flag will no-op
+  identical re-imports.
+- **Surface integration**: `get_session_stats`'s `runtime_signal`
+  now reflects real numbers post-ingest (was always zero in Phase 0).
+- **21 new tests** in `tests/test_runtime_phase1.py` covering parser
+  shapes, ingest happy-path / unmapped / no-code-attrs / redaction-log /
+  idempotency / FIFO-eviction / session-stats integration / mapping-rate
+  threshold (≥90% on synthetic fixture; actual 95%), and the MCP-tool
+  wrapper (success / unknown-source / Phase-4-source / missing-index errors).
+
+### Phase 0 — Trace-ingestion scaffold
 
 - **INDEX_VERSION 13 → 14.** Existing v13 (and earlier v9–v12) databases
   auto-migrate on first open via `_migrate_v13_to_v14()`; the migration is

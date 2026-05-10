@@ -326,6 +326,7 @@ DEFAULTS = {
             "get_project_intel", "invalidate_cache", "get_watch_status",
             "analyze_perf", "tune_weights", "check_embedding_drift",
             "digest", "diff_health_radar", "get_file_risk",
+            "import_runtime_signal",
         ],
     },
     "model_tier_map": {
@@ -1277,6 +1278,7 @@ def generate_template() -> str:
         "get_tectonic_map",
         "get_untested_symbols",
         "get_watch_status",
+        "import_runtime_signal",
         "index_file",
         "index_folder",
         "index_repo",

@@ -84,6 +84,8 @@ _CANONICAL_TOOL_NAMES: tuple[str, ...] = (
     "set_tool_tier", "announce_model",
     # Composite retrieval
     "winnow_symbols",
+    # Runtime trace ingest (Phase 1)
+    "import_runtime_signal",
     # Self-guide (force-included; lets one-line CLAUDE.md pull full policy on demand)
     "jcodemunch_guide",
 )
@@ -107,7 +109,7 @@ _TOOL_TIER_CORE: frozenset[str] = frozenset({
 
 _TOOL_TIER_STANDARD: frozenset[str] = _TOOL_TIER_CORE | frozenset({
     # Indexing extras
-    "summarize_repo", "embed_repo",
+    "summarize_repo", "embed_repo", "import_runtime_signal",
     # Discovery extras
     "suggest_queries", "search_columns",
     # Relationships
@@ -793,6 +795,42 @@ def _build_tools_list() -> list[Tool]:
                 },
                 "required": ["path"]
             }
+        ),
+        Tool(
+            name="import_runtime_signal",
+            description=(
+                "Ingest a runtime trace file (OTel JSON / JSON-Lines / .gz) into the "
+                "runtime_* tables for the target repo. Maps spans to indexed symbols "
+                "via (file_path, line_no, function_name) and records duration metrics "
+                "(p50/p95) plus per-edge counts. Returns {records, mapped, unmapped, "
+                "redactions_fired, unmapped_reasons, evicted}. PII is redacted at the "
+                "ingest chokepoint by default. Phase 1 supports source='otel'; "
+                "sql_log / stack_log / apm land in Phase 4+."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "source": {
+                        "type": "string",
+                        "enum": ["otel", "sql_log", "stack_log", "apm"],
+                        "description": "Trace source format. Phase 1 accepts only 'otel'.",
+                        "default": "otel",
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": "Absolute filesystem path to the trace file",
+                    },
+                    "repo": {
+                        "type": "string",
+                        "description": "Repository identifier (owner/name) — defaults to the current directory's resolved repo",
+                    },
+                    "redact_enabled": {
+                        "type": "boolean",
+                        "description": "Override the runtime_redact_enabled config key. Disable ONLY for offline debugging on synthetic data.",
+                    },
+                },
+                "required": ["path"],
+            },
         ),
         Tool(
             name="list_repos",
@@ -3195,6 +3233,18 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 )
             )
             _result_cache_invalidate()
+        elif name == "import_runtime_signal":
+            from .tools.import_runtime_signal import import_runtime_signal
+            result = await asyncio.to_thread(
+                functools.partial(
+                    import_runtime_signal,
+                    source=arguments.get("source", "otel"),
+                    path=arguments["path"],
+                    repo=arguments.get("repo"),
+                    redact_enabled=arguments.get("redact_enabled"),
+                    storage_path=storage_path,
+                )
+            )
         elif name == "list_repos":
             from .tools.list_repos import list_repos
             result = await asyncio.to_thread(
@@ -4790,6 +4840,7 @@ def _generate_claude_md_snippet(missing_only: bool = False) -> str:
         ("Utilities", ["get_session_stats", "analyze_perf", "tune_weights", "check_embedding_drift",
                         "invalidate_cache", "test_summarizer",
                         "audit_agent_config", "get_watch_status"]),
+        ("Runtime Trace Ingest", ["import_runtime_signal"]),
         ("Runtime Tier Switching", ["set_tool_tier", "announce_model"]),
         ("Self-Guide", ["jcodemunch_guide"]),
     ]
@@ -5540,6 +5591,30 @@ def main(argv: Optional[list[str]] = None):
     )
     _add_common_args(index_file_parser)
 
+    # --- import-trace (Phase 1: OTel file ingest) ---
+    import_trace_parser = subparsers.add_parser(
+        "import-trace",
+        help="Ingest a runtime trace file (OTel JSON / JSONL) into the index's runtime_* tables",
+    )
+    import_trace_parser.add_argument(
+        "--otel",
+        dest="otel_path",
+        metavar="PATH",
+        help="Path to an OTel JSON, JSON-Lines, or .gz trace file",
+    )
+    import_trace_parser.add_argument(
+        "--repo",
+        dest="repo",
+        default=None,
+        help="Repo identifier (owner/name) — defaults to resolving the current directory",
+    )
+    import_trace_parser.add_argument(
+        "--no-redact",
+        action="store_true",
+        help="Disable PII redaction. Use ONLY for offline debugging on synthetic data.",
+    )
+    _add_common_args(import_trace_parser)
+
     # --- init ---
     init_parser = subparsers.add_parser(
         "init",
@@ -5890,7 +5965,7 @@ def main(argv: Optional[list[str]] = None):
     if any(arg in top_level_flags for arg in raw_argv):
         args = parser.parse_args(raw_argv)
     else:
-        known_commands = {"serve", "watch", "hook-event", "hook-pretooluse", "hook-posttooluse", "hook-copilot-posttooluse", "hook-precompact", "hook-taskcomplete", "hook-subagent-start", "watch-claude", "watch-all", "watch-install", "watch-uninstall", "watch-status", "config", "index", "index-file", "claude-md", "init", "install-pack", "download-model", "upgrade", "whatsnew", "receipt", "digest", "health", "file-risk", "observatory"}
+        known_commands = {"serve", "watch", "hook-event", "hook-pretooluse", "hook-posttooluse", "hook-copilot-posttooluse", "hook-precompact", "hook-taskcomplete", "hook-subagent-start", "watch-claude", "watch-all", "watch-install", "watch-uninstall", "watch-status", "config", "index", "index-file", "import-trace", "claude-md", "init", "install-pack", "download-model", "upgrade", "whatsnew", "receipt", "digest", "health", "file-risk", "observatory"}
         # MCP-tool-name typos: route to the right CLI verb with a friendly hint.
         # `index_repo` and `index_folder` are MCP tools, not CLI subcommands.
         _CLI_ALIASES = {
@@ -6201,6 +6276,26 @@ def main(argv: Optional[list[str]] = None):
         )
         print(_json.dumps(result, indent=2))
         if not result.get("success"):
+            sys.exit(1)
+    elif args.command == "import-trace":
+        from .tools.import_runtime_signal import import_runtime_signal as _import_runtime_signal
+        import json as _json
+
+        if not getattr(args, "otel_path", None):
+            print(
+                "jcodemunch-mcp: error: import-trace requires --otel <path>",
+                file=sys.stderr,
+            )
+            sys.exit(2)
+        result = _import_runtime_signal(
+            source="otel",
+            path=args.otel_path,
+            repo=args.repo,
+            redact_enabled=not args.no_redact,
+            storage_path=os.environ.get("CODE_INDEX_PATH"),
+        )
+        print(_json.dumps(result, indent=2))
+        if not result.get("success", True):
             sys.exit(1)
     else:
         # serve (default)
