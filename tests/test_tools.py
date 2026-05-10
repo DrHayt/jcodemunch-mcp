@@ -30,6 +30,36 @@ def test_parse_github_url_short():
     assert parse_github_url("owner/repo") == ("owner", "repo")
 
 
+def test_parse_github_url_trailing_slash():
+    assert parse_github_url("https://github.com/owner/repo/") == ("owner", "repo")
+
+
+def test_parse_github_url_git_suffix_with_trailing_slash():
+    assert parse_github_url("https://github.com/owner/repo.git/") == ("owner", "repo")
+
+
+def test_parse_github_url_ssh():
+    assert parse_github_url("git@github.com:owner/repo.git") == ("owner", "repo")
+    assert parse_github_url("git@github.com:owner/repo") == ("owner", "repo")
+
+
+def test_parse_github_url_bare_host():
+    assert parse_github_url("github.com/owner/repo") == ("owner", "repo")
+    assert parse_github_url("github.com/owner/repo.git") == ("owner", "repo")
+
+
+def test_parse_github_url_ssh_rejects_other_host():
+    with pytest.raises(ValueError, match="Unsupported host"):
+        parse_github_url("git@gitlab.com:owner/repo.git")
+
+
+def test_parse_github_url_empty():
+    with pytest.raises(ValueError, match="Empty"):
+        parse_github_url("")
+    with pytest.raises(ValueError, match="Empty"):
+        parse_github_url("   ")
+
+
 def test_should_skip_file():
     """Test skip patterns."""
     assert should_skip_file("node_modules/foo.js") is True

@@ -2,6 +2,47 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.96.2] — 2026-05-10 — `index` accepts full GitHub URLs + MCP-tool typo hints
+
+Closes [#289](https://github.com/jgravelle/jcodemunch-mcp/issues/289).
+The CLI's `index` subcommand now accepts every common GitHub URL form,
+not just `owner/repo`:
+
+```
+jcodemunch-mcp index https://github.com/elastic/kibana
+jcodemunch-mcp index https://github.com/elastic/kibana/
+jcodemunch-mcp index https://github.com/elastic/kibana.git
+jcodemunch-mcp index git@github.com:elastic/kibana.git
+jcodemunch-mcp index github.com/elastic/kibana
+jcodemunch-mcp index elastic/kibana   # still works
+```
+
+All five forms collapse to `elastic/kibana` via `parse_github_url`,
+which now handles SSH (`git@host:path`), bare-host (`github.com/...`),
+and trailing slashes alongside the existing `https://github.com/...`
+and `owner/repo` forms.  Hostname validation still runs before any
+network call (SSRF guard from v1.x.x is intact).
+
+MCP-tool-name typos at the CLI now print a friendly hint instead of
+an opaque argparse error:
+
+```
+$ jcodemunch-mcp index_repo https://github.com/elastic/kibana
+jcodemunch-mcp: error: unknown subcommand `index_repo`. Did you mean:
+    jcodemunch-mcp index <owner/repo>
+    jcodemunch-mcp index <github-url>
+    jcodemunch-mcp index <local-path>
+```
+
+Aliased typos: `index_repo`, `index-repo`, `index_folder`,
+`index-folder` → `index`; `index_file` → `index-file`.  The CLI exits
+2 (argparse-style usage error) so scripts can detect the mismatch.
+
+Surfaced by @Bamieh on
+[#275](https://github.com/jgravelle/jcodemunch-mcp/issues/275#issuecomment-4414717322).
+
+No schema or index-format changes. Re-index not required.
+
 ## [1.96.1] — 2026-05-10 — Self-describing observatory `index.json`
 
 `jcodemunch-mcp observatory build` now embeds three top-level metadata

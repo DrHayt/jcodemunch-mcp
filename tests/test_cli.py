@@ -143,3 +143,28 @@ def test_main_version_exits_with_version(capsys):
     assert exc.value.code == 0
     out = capsys.readouterr().out.strip()
     assert out.startswith("jcodemunch-mcp ")
+
+
+@pytest.mark.parametrize("alias", ["index_repo", "index-repo", "index_folder", "index-folder"])
+def test_index_alias_typos_print_did_you_mean(alias, capsys):
+    """MCP-tool-name typos should print a 'did you mean' hint and exit 2."""
+    with pytest.raises(SystemExit) as exc:
+        main([alias, "owner/repo"])
+
+    assert exc.value.code == 2
+    err = capsys.readouterr().err
+    assert f"unknown subcommand `{alias}`" in err
+    assert "jcodemunch-mcp index <owner/repo>" in err
+    assert "jcodemunch-mcp index <github-url>" in err
+    assert "jcodemunch-mcp index <local-path>" in err
+
+
+def test_index_file_alias_typo_routes_to_index_file(capsys):
+    """`index_file` (underscore) should suggest `index-file`."""
+    with pytest.raises(SystemExit) as exc:
+        main(["index_file", "/tmp/foo.py"])
+
+    assert exc.value.code == 2
+    err = capsys.readouterr().err
+    assert "unknown subcommand `index_file`" in err
+    assert "jcodemunch-mcp index-file" in err

@@ -1,9 +1,9 @@
 # jcodemunch-mcp — Project Brief
 
 ## Current State
-- **Version:** 1.96.1 (published to PyPI; VS Code extension v0.2.0 live on marketplace)
+- **Version:** 1.96.2 (published to PyPI; VS Code extension v0.2.0 live on marketplace)
 - **INDEX_VERSION:** 13
-- **Tests:** 4002 passed, 7 skipped (1.96.1)
+- **Tests:** 4017 passed, 7 skipped (1.96.2)
 - **Python:** >=3.10
 
 ## Key Files

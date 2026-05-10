@@ -238,7 +238,7 @@ Want a slowest-tools / coldest-caches view? Ask: *"Run analyze_perf"* — the ag
 | Goal | Tool |
 |------|------|
 | Index a local project | `index_folder { "path": "/your/project" }` |
-| Index a GitHub repo | `index_repo { "url": "owner/repo" }` |
+| Index a GitHub repo | `index_repo { "url": "owner/repo" }` (also accepts full `https://github.com/owner/repo`, `.git`, SSH, or bare `github.com/...` forms) |
 | Re-index one file after editing | `index_file { "path": "/your/project/src/foo.py" }` |
 | Find a function by name | `search_symbols { "repo": "...", "query": "funcName" }` |
 | Read a specific function | `get_symbol_source { "repo": "...", "symbol_id": "..." }` |

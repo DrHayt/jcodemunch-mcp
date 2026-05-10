@@ -5891,6 +5891,26 @@ def main(argv: Optional[list[str]] = None):
         args = parser.parse_args(raw_argv)
     else:
         known_commands = {"serve", "watch", "hook-event", "hook-pretooluse", "hook-posttooluse", "hook-copilot-posttooluse", "hook-precompact", "hook-taskcomplete", "hook-subagent-start", "watch-claude", "watch-all", "watch-install", "watch-uninstall", "watch-status", "config", "index", "index-file", "claude-md", "init", "install-pack", "download-model", "upgrade", "whatsnew", "receipt", "digest", "health", "file-risk", "observatory"}
+        # MCP-tool-name typos: route to the right CLI verb with a friendly hint.
+        # `index_repo` and `index_folder` are MCP tools, not CLI subcommands.
+        _CLI_ALIASES = {
+            "index_repo": "index",
+            "index-repo": "index",
+            "index_folder": "index",
+            "index-folder": "index",
+            "index_file": "index-file",
+        }
+        first_pos = next((a for a in raw_argv if not a.startswith("-")), None)
+        if first_pos in _CLI_ALIASES:
+            target = _CLI_ALIASES[first_pos]
+            print(
+                f"jcodemunch-mcp: error: unknown subcommand `{first_pos}`. Did you mean:\n"
+                f"    jcodemunch-mcp {target} <owner/repo>\n"
+                f"    jcodemunch-mcp {target} <github-url>\n"
+                f"    jcodemunch-mcp {target} <local-path>",
+                file=sys.stderr,
+            )
+            sys.exit(2)
         has_subcommand = any(arg in known_commands for arg in raw_argv if not arg.startswith("-"))
         if not has_subcommand:
             raw_argv = ["serve"] + list(raw_argv)
@@ -6145,7 +6165,10 @@ def main(argv: Optional[list[str]] = None):
         import json as _json
         t = args.target
         use_ai = not args.no_ai_summaries and _default_use_ai_summaries()
-        # Heuristic: "owner/repo" is a GitHub repo; anything else is a local path
+        # Heuristic: local paths start with /, ., or a Windows drive letter.
+        # Everything else (owner/repo, github.com/owner/repo, https://github.com/...,
+        # git@github.com:owner/repo) routes to the GitHub indexer, which calls
+        # parse_github_url for normalization.
         is_local = "/" not in t or t.startswith("/") or t.startswith(".") or (len(t) > 1 and t[1] == ":")
         if is_local:
             from .tools.index_folder import index_folder as _index_folder
