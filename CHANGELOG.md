@@ -2,7 +2,12 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
-## [2.0.0] — 2026-05-10 — Phase 7: runtime-aware PR risk (milestone capstone)
+## [2.0.1] — 2026-05-10 — Phase 7: runtime-aware PR risk (milestone capstone)
+
+(v2.0.0 was minted locally but the filename had been used by a previous
+yanked release — PyPI doesn't allow filename reuse. Re-cut as v2.0.1
+with no other changes.)
+
 
 The reason this whole milestone existed. An agent reviewing a PR can now
 distinguish *"you're touching code that runs 1M times/day in prod"* from

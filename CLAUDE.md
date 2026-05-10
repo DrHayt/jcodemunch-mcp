@@ -1,9 +1,9 @@
 # jcodemunch-mcp — Project Brief
 
 ## Current State
-- **Version:** 2.0.0 (runtime trace ingestion: Phases 0-7 — milestone capstone)
+- **Version:** 2.0.1 (runtime trace ingestion: Phases 0-7 — milestone capstone)
 - **INDEX_VERSION:** 16
-- **Tests:** 4165 passed, 7 skipped (2.0.0)
+- **Tests:** 4165 passed, 7 skipped (2.0.1)
 - **Python:** >=3.10
 
 ## Key Files
