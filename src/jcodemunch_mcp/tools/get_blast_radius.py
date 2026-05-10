@@ -419,5 +419,49 @@ def get_blast_radius(
             }
             for d in sorted(files_by_depth)
         ]
+
+    # Phase 2: runtime confidence — zero-cost no-op when no traces ingested.
+    # We stamp three surfaces:
+    #   1. `result["symbol"]._runtime_confidence` — the focal symbol's status
+    #   2. `result["confirmed"][i]._runtime_confidence` — file-level for downstream importers
+    #   3. `result["callers"][i]._runtime_confidence` — per-symbol when call_depth > 0
+    from ..runtime.confidence import (
+        attach_runtime_confidence as _attach_runtime,
+        attach_runtime_confidence_by_file as _attach_runtime_files,
+    )
+    _db_path_str = str(store._sqlite._db_path(owner, name))
+    # Focal symbol — wrap so the helper can stamp _runtime_confidence in-place
+    _focal_list = [result["symbol"]]
+    _focal_summary = _attach_runtime(_focal_list, _db_path_str, id_field="id")
+    # File-level on confirmed importers
+    _file_summary = _attach_runtime_files(result["confirmed"], _db_path_str, file_field="file")
+    # Symbol-level on callers (when present)
+    _caller_summary: dict = {}
+    if "callers" in result and result["callers"]:
+        _caller_summary = _attach_runtime(result["callers"], _db_path_str, id_field="id")
+    if _focal_summary or _file_summary or _caller_summary:
+        # Merge sources + take the freshest last_seen across the surfaces
+        _all_sources: set[str] = set()
+        _last_seen = ""
+        for s in (_focal_summary, _file_summary, _caller_summary):
+            for src in s.get("sources", []):
+                _all_sources.add(src)
+            if s.get("last_seen", "") > _last_seen:
+                _last_seen = s["last_seen"]
+        # Coverage = focal + caller per-symbol confirmations / total surfaces stamped
+        _stamped = (
+            len(_focal_list)
+            + len(result.get("confirmed", []))
+            + (len(result.get("callers", [])) if "callers" in result else 0)
+        )
+        _confirmed_count = sum(
+            1 for items in (_focal_list, result.get("confirmed", []), result.get("callers", []) if "callers" in result else [])
+            for e in items if isinstance(e, dict) and e.get("_runtime_confidence") == "confirmed"
+        )
+        result["_meta"]["runtime_freshness"] = {
+            "sources": sorted(_all_sources),
+            "last_seen": _last_seen,
+            "coverage_pct": round(100 * _confirmed_count / max(1, _stamped)),
+        }
     result_cache_put("get_blast_radius", repo_key, specific_key, result)
     return result

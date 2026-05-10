@@ -246,6 +246,31 @@ def _find_references_batch(
     }
 
 
+def _attach_runtime_to_response(response: dict, store, owner: str, name: str) -> dict:
+    """Phase 2: stamp file-level runtime confidence on every reference in
+    a find_references response (single or batch mode). No-op when no traces.
+    """
+    from ..runtime.confidence import attach_runtime_confidence_by_file
+    refs: list[dict] = []
+    if "references" in response:
+        # Singular mode
+        refs.extend(response["references"])
+    if "results" in response:
+        # Batch mode
+        for entry in response.get("results", []):
+            refs.extend(entry.get("references", []))
+    if not refs:
+        return response
+    summary = attach_runtime_confidence_by_file(
+        refs,
+        str(store._sqlite._db_path(owner, name)),
+        file_field="file",
+    )
+    if summary:
+        response.setdefault("_meta", {})["runtime_freshness"] = summary
+    return response
+
+
 def find_references(
     repo: str,
     identifier: Optional[str] = None,
@@ -298,7 +323,8 @@ def find_references(
         return {"error": f"Repository not indexed: {owner}/{name}"}
 
     if identifiers is not None:
-        return _find_references_batch(identifiers, index, max_results, owner, name, start)
+        result = _find_references_batch(identifiers, index, max_results, owner, name, start)
+        return _attach_runtime_to_response(result, store, owner, name)
     else:
         repo_key = f"{owner}/{name}"
         specific_key = (identifier, max_results, include_call_chain)
@@ -308,11 +334,11 @@ def find_references(
             result["_meta"] = {**cached["_meta"],
                                "timing_ms": round((time.perf_counter() - start) * 1000, 1),
                                "cache_hit": True}
-            return result
+            return _attach_runtime_to_response(result, store, owner, name)
         result = _find_references_single(
             identifier, index, max_results, owner, name, start,
             include_call_chain=include_call_chain,
             store=store,
         )
         result_cache_put("find_references", repo_key, specific_key, result)
-        return result
+        return _attach_runtime_to_response(result, store, owner, name)

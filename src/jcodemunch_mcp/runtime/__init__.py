@@ -11,6 +11,11 @@ Public surface:
 - VALID_SOURCES — frozenset of accepted source labels
 """
 
+from .confidence import (
+    RuntimeConfidenceProbe,
+    attach_runtime_confidence,
+    attach_runtime_confidence_by_file,
+)
 from .ingest import ingest_otel_file
 from .otel import OtelSpan, parse_otel_file
 from .redact import redact_trace_record
@@ -24,5 +29,8 @@ __all__ = [
     "parse_otel_file",
     "ingest_otel_file",
     "OtelSpan",
+    "RuntimeConfidenceProbe",
+    "attach_runtime_confidence",
+    "attach_runtime_confidence_by_file",
     "VALID_SOURCES",
 ]

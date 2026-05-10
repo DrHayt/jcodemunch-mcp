@@ -177,7 +177,7 @@ def get_call_hierarchy(
         r = edge.get("resolution", "unknown")
         resolution_counts[r] = resolution_counts.get(r, 0) + 1
 
-    return {
+    response: dict = {
         "repo": f"{owner}/{name}",
         "symbol": {
             "id": sym.get("id", ""),
@@ -203,3 +203,12 @@ def get_call_hierarchy(
             "tip": tip,
         },
     }
+
+    # Phase 2: runtime confidence — zero-cost no-op when no traces ingested.
+    from ..runtime.confidence import attach_runtime_confidence as _attach_runtime
+    _db_path_str = str(store._sqlite._db_path(owner, name))
+    _stamped: list[dict] = [response["symbol"], *callers, *callees]
+    _summary = _attach_runtime(_stamped, _db_path_str, id_field="id")
+    if _summary:
+        response["_meta"]["runtime_freshness"] = _summary
+    return response

@@ -961,6 +961,15 @@ def search_symbols(
     )
     _probe.annotate(scored_results)
     meta["freshness"] = _probe.summary(scored_results)
+    # Phase 2: runtime confidence — zero-cost no-op when no traces ingested.
+    from ..runtime.confidence import attach_runtime_confidence as _attach_runtime
+    _runtime_summary = _attach_runtime(
+        scored_results,
+        str(store._sqlite._db_path(owner, name)),
+        id_field="id",
+    )
+    if _runtime_summary:
+        meta["runtime_freshness"] = _runtime_summary
     _attach_confidence(result, scored_results, is_stale=_probe.repo_is_stale)
     _feat = _ledger_feats(scored_results)
     _record_ranking_event(
@@ -1225,6 +1234,15 @@ def _search_symbols_semantic(
     )
     _probe.annotate(scored_results)
     meta["freshness"] = _probe.summary(scored_results)
+    # Phase 2: runtime confidence — zero-cost no-op when no traces ingested.
+    from ..runtime.confidence import attach_runtime_confidence as _attach_runtime
+    _runtime_summary = _attach_runtime(
+        scored_results,
+        str(store._sqlite._db_path(owner, name)),
+        id_field="id",
+    )
+    if _runtime_summary:
+        meta["runtime_freshness"] = _runtime_summary
     _attach_confidence(result, scored_results, is_stale=_probe.repo_is_stale)
     _feat = _ledger_feats(scored_results)
     _record_ranking_event(
@@ -1494,6 +1512,15 @@ def _search_symbols_fusion(
     )
     _probe.annotate(scored_results)
     meta["freshness"] = _probe.summary(scored_results)
+    # Phase 2: runtime confidence — zero-cost no-op when no traces ingested.
+    from ..runtime.confidence import attach_runtime_confidence as _attach_runtime
+    _runtime_summary = _attach_runtime(
+        scored_results,
+        str(store._sqlite._db_path(owner, name)),
+        id_field="id",
+    )
+    if _runtime_summary:
+        meta["runtime_freshness"] = _runtime_summary
     _attach_confidence(result, scored_results, is_stale=_probe.repo_is_stale)
     _feat = _ledger_feats(scored_results)
     _record_ranking_event(

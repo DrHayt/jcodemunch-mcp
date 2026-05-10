@@ -147,9 +147,19 @@ def get_symbol_source(
     )
     _probe.annotate(symbols_out)
 
+    # Phase 2: runtime confidence — zero-cost no-op when no traces ingested.
+    from ..runtime.confidence import attach_runtime_confidence as _attach_runtime
+    _runtime_summary = _attach_runtime(
+        symbols_out,
+        str(store._sqlite._db_path(owner, name)),
+        id_field="id",
+    )
+
     if batch_mode:
         meta["symbol_count"] = len(symbols_out)
         meta["freshness"] = _probe.summary(symbols_out)
+        if _runtime_summary:
+            meta["runtime_freshness"] = _runtime_summary
         return {"symbols": symbols_out, "errors": errors_out, "_meta": meta}
 
     # Single mode: flat object or error
@@ -158,5 +168,7 @@ def get_symbol_source(
     result = symbols_out[0]
     meta["hint"] = "Use get_context_bundle(symbol_id) to retrieve source + imports in one call"
     meta["freshness"] = _probe.summary(symbols_out)
+    if _runtime_summary:
+        meta["runtime_freshness"] = _runtime_summary
     result["_meta"] = meta
     return result

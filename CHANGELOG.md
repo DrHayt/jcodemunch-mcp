@@ -2,11 +2,39 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
-## [unreleased] — Phase 0 + Phase 1: trace ingestion (OTel JSON)
+## [1.97.0] — 2026-05-10 — Runtime trace ingestion (Phases 0-2)
 
-Foundation + first ingest channel for runtime trace ingestion (roadmap
-[todo.md](../todo.md)). Sealed for v1.97.0 once Phase 2 lands (runtime
-confidence on existing tool results).
+First runtime-aware release. Static call graph + ingested OTel trace data
+combine on every result so agents can distinguish *"this code runs 1M
+times/day in prod"* from *"this code has run zero times this quarter."*
+Roadmap source: [todo.md](../todo.md).
+
+### Phase 2 — Runtime confidence on existing tool results
+
+- **`_runtime_confidence` per result** on `search_symbols`,
+  `get_symbol_source`, `find_references`, `get_blast_radius`, and
+  `get_call_hierarchy`. Values: `confirmed` (≥1 row in `runtime_calls`
+  for this symbol), `declared_only` (in graph, no runtime evidence).
+  `find_references` uses **file-level** confidence (any indexed symbol
+  in the importing file with runtime evidence) since references aren't
+  symbol-keyed.
+- **`_meta.runtime_freshness` block**:
+  `{sources, last_seen, coverage_pct}` — sources is sorted list of
+  trace sources contributing (today: `['otel']`); last_seen is ISO-8601
+  most-recent across the result set; coverage_pct is integer % of
+  returned items with runtime evidence.
+- **Zero-cost when no traces ingested**: probe checks for any row in
+  `runtime_calls` at construction; if absent, no field is added and the
+  response shape is identical to the v1.96.x contract. Read-only
+  connections use `?mode=ro&immutable=1` so they never touch -shm/-wal
+  files and never invalidate the CodeIndex LRU cache.
+- **New module `runtime/confidence.py`**: `RuntimeConfidenceProbe` class
+  + `attach_runtime_confidence()` and `attach_runtime_confidence_by_file()`
+  helpers for symbol-keyed and file-keyed surfaces.
+- **14 new tests in `tests/test_runtime_phase2.py`** covering the probe
+  contract (zero-cost, stamping, coverage math), helper variants
+  (symbol-keyed, file-keyed, invalid-db-path), and full integration on
+  the 5 affected tools (with-and-without-runtime paths).
 
 ### Phase 1 — OTel JSON / JSON-Lines / .gz import
 
@@ -70,7 +98,18 @@ confidence on existing tool results).
   redaction chokepoint (incl. nested-dict and list recursion), and the
   resolver across exact / fallback-by-name / suffix-match / miss paths.
 
-No release tag; merges into main as foundation for the Phase 1 ingest tools.
+### Test status
+
+- **4073 passed**, 7 skipped (+14 Phase 2, +21 Phase 1, +21 Phase 0 vs v1.96.2 baseline).
+
+### Differentiation note
+
+This is the first runtime-aware code-intelligence MCP. codebase-memory-mcp's
+`ingest_traces` validates HTTP_CALLS edges only; jCodeMunch's
+`import_runtime_signal` is the foundation for ingesting **every** edge type
+across **multiple** signal sources (Phase 1 ships OTel; Phase 4+ adds SQL
+logs and stack traces; Phase 6 adds opt-in live ingest; Phase 7 wires
+runtime weighting into `get_pr_risk_profile`).
 
 ## [1.96.2] — 2026-05-10 — `index` accepts full GitHub URLs + MCP-tool typo hints
 
