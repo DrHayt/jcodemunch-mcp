@@ -1067,29 +1067,57 @@ def index_folder(
         )
         store = IndexStore(base_path=storage_path)
 
-        # v1.95.0: when an existing index at this identity was built from a
-        # different working tree, refuse rather than silently overwriting it.
-        # Two clones of the same repo at different paths would otherwise
-        # collapse into one storage entry. Users can opt out via
-        # `git_root_identity: false` to keep the per-path basename identity.
+        # v1.95.0/1: collision guards.  Both fire only when the new identity
+        # came from git-root detection (`_git_root` is non-empty) and an
+        # existing index at the same identity also recorded a `git_root`.
+        #
+        # 1. Different working trees of the same repo (`_git_root` mismatch):
+        #    refuse rather than silently overwriting.  Two clones of
+        #    `elastic/kibana` at different paths would otherwise collapse.
+        #
+        # 2. Same working tree, different source_root subdir (v1.95.1):
+        #    `index ./packages` then `index ./scripts` from the same clone
+        #    both resolve to `elastic/kibana`.  Today's `save_index`
+        #    replaces all data, so the second call would wipe the first.
+        #    The v1.96 subdir-merge logic isn't here yet — refuse for now
+        #    and point users at the workarounds.
         _existing_for_collision = store.load_index(owner, repo_name)
         if (
             _git_root
             and _existing_for_collision is not None
             and getattr(_existing_for_collision, "git_root", "")
-            and _existing_for_collision.git_root != _git_root
         ):
-            return {
-                "success": False,
-                "error": (
-                    f"Index '{owner}/{repo_name}' already exists at "
-                    f"'{_existing_for_collision.git_root}'. Indexing a "
-                    f"second working tree at '{_git_root}' would overwrite "
-                    "it. Set `git_root_identity: false` in config (or "
-                    "JCODEMUNCH_GIT_ROOT_IDENTITY=0) to keep per-path "
-                    "indexes, or delete the existing index first."
-                ),
-            }
+            _existing_git_root = _existing_for_collision.git_root
+            _existing_source_root = getattr(_existing_for_collision, "source_root", "") or ""
+            _new_source_root = str(folder_path)
+            if _existing_git_root != _git_root:
+                return {
+                    "success": False,
+                    "error": (
+                        f"Index '{owner}/{repo_name}' already exists at "
+                        f"'{_existing_git_root}'. Indexing a second working "
+                        f"tree at '{_git_root}' would overwrite it. Set "
+                        "`git_root_identity: false` in config (or "
+                        "JCODEMUNCH_GIT_ROOT_IDENTITY=0) to keep per-path "
+                        "indexes, or delete the existing index first."
+                    ),
+                }
+            if _existing_source_root and _existing_source_root != _new_source_root:
+                return {
+                    "success": False,
+                    "error": (
+                        f"Index '{owner}/{repo_name}' was built from "
+                        f"'{_existing_source_root}'. Indexing a different "
+                        f"subdirectory ('{_new_source_root}') of the same "
+                        "working tree would overwrite that index until the "
+                        "v1.96 subdir-merge support lands. For now, either "
+                        f"re-run from the repo root (`cd {_git_root} && "
+                        "jcodemunch-mcp index .`) so one index covers all "
+                        "subdirs, or set `git_root_identity: false` (or "
+                        "JCODEMUNCH_GIT_ROOT_IDENTITY=0) to keep separate "
+                        "per-subdir indexes the v1.94 way."
+                    ),
+                }
 
         # ── Branch-aware indexing ──
         # Detect current git branch. If a base index exists and we're on a

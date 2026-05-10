@@ -216,6 +216,93 @@ class TestIndexFolderIdentity:
         assert loaded is not None
         assert loaded.git_root == str(repo.resolve())
 
+    def test_subdir_index_after_root_index_refuses_with_v196_hint(self, tmp_path):
+        # v1.95.1 regression guard: indexing a subdir of an already-indexed
+        # clone would silently overwrite the root index until v1.96 ships
+        # subdir merge. Refuse with a clear error pointing at workarounds.
+        repo = tmp_path / "kibana"
+        repo.mkdir()
+        _git("init", cwd=repo)
+        _set_origin(repo, "https://github.com/elastic/kibana.git")
+        (repo / "main.py").write_text("def hello(): pass\n", encoding="utf-8")
+        sub = repo / "packages" / "thing"
+        sub.mkdir(parents=True)
+        (sub / "x.py").write_text("def x(): pass\n", encoding="utf-8")
+
+        store = tmp_path / "store"
+        first = index_folder(str(repo), use_ai_summaries=False, storage_path=str(store))
+        assert first["success"] is True
+
+        second = index_folder(str(sub), use_ai_summaries=False, storage_path=str(store))
+        assert second["success"] is False
+        # Mentions both the existing source_root and the v1.96 / opt-out path
+        assert str(repo.resolve()) in second["error"]
+        assert "v1.96" in second["error"]
+        assert "git_root_identity" in second["error"]
+
+    def test_two_subdirs_of_same_clone_refuse_second(self, tmp_path):
+        # Bamieh's exact workflow: `index ./packages` then `index ./scripts`
+        # from the same clone both resolve to `elastic/kibana`. The second
+        # would wipe the first under raw v1.95.0; v1.95.1 refuses.
+        repo = tmp_path / "kibana"
+        repo.mkdir()
+        _git("init", cwd=repo)
+        _set_origin(repo, "https://github.com/elastic/kibana.git")
+        packages = repo / "packages"
+        packages.mkdir()
+        (packages / "p.py").write_text("def p(): pass\n", encoding="utf-8")
+        scripts = repo / "scripts"
+        scripts.mkdir()
+        (scripts / "s.py").write_text("def s(): pass\n", encoding="utf-8")
+
+        store = tmp_path / "store"
+        first = index_folder(str(packages), use_ai_summaries=False, storage_path=str(store))
+        assert first["success"] is True
+
+        second = index_folder(str(scripts), use_ai_summaries=False, storage_path=str(store))
+        assert second["success"] is False
+        assert str(packages.resolve()) in second["error"]
+        assert str(scripts.resolve()) in second["error"]
+
+    def test_reindex_same_subdir_succeeds(self, tmp_path):
+        # The refuse must NOT fire when the user re-indexes the same subdir
+        # — that's the normal incremental re-index path.
+        repo = tmp_path / "kibana"
+        repo.mkdir()
+        _git("init", cwd=repo)
+        _set_origin(repo, "https://github.com/elastic/kibana.git")
+        (repo / "main.py").write_text("def a(): pass\n", encoding="utf-8")
+
+        store = tmp_path / "store"
+        first = index_folder(str(repo), use_ai_summaries=False, storage_path=str(store))
+        assert first["success"] is True
+
+        # Re-index the same path: must succeed.
+        second = index_folder(str(repo), use_ai_summaries=False, storage_path=str(store))
+        assert second["success"] is True
+
+    def test_subdir_under_no_origin_repo_keeps_v194_behavior(self, tmp_path):
+        # Without an origin remote, identity falls back to local/<basename>-<hash>
+        # per subdir, so `index ./a` and `index ./b` get DIFFERENT identities
+        # and the refuse never fires. v1.94 behavior preserved.
+        repo = tmp_path / "internal-tool"
+        repo.mkdir()
+        _git("init", cwd=repo)  # no origin set
+        a = repo / "a"
+        a.mkdir()
+        (a / "f.py").write_text("def a(): pass\n", encoding="utf-8")
+        b = repo / "b"
+        b.mkdir()
+        (b / "g.py").write_text("def b(): pass\n", encoding="utf-8")
+
+        store = tmp_path / "store"
+        first = index_folder(str(a), use_ai_summaries=False, storage_path=str(store))
+        assert first["success"] is True
+
+        second = index_folder(str(b), use_ai_summaries=False, storage_path=str(store))
+        assert second["success"] is True
+        assert first["repo"] != second["repo"]
+
     def test_collision_detection_blocks_second_working_tree(self, tmp_path):
         repo_a = tmp_path / "kibana-a"
         repo_a.mkdir()

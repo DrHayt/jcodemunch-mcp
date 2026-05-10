@@ -2,6 +2,32 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.95.1] — 2026-05-10 — Hot-fix: refuse subdir overwrite under shared git-root identity
+
+v1.95.0 introduced a regression for the exact workflow [#288](https://github.com/jgravelle/jcodemunch-mcp/issues/288)
+was filed against. With `git_root_identity` on (default), running
+`index ./packages` then `index ./scripts` from a clone of
+`elastic/kibana` resolves both to identity `elastic/kibana`. The
+v1.95.0 collision guard only fired when `git_root` *differed*, so the
+second call's `save_index` silently wiped the first's content.
+
+v1.95.1 extends the guard: same `git_root` + different `source_root` is
+also a refuse, until v1.96 ships the actual subdir-merge logic. Error
+points at the two workarounds:
+
+* `cd <git_root> && jcodemunch-mcp index .` — one index covers all
+  subdirs (the recommended path until v1.96).
+* `git_root_identity: false` (or `JCODEMUNCH_GIT_ROOT_IDENTITY=0`) —
+  fall back to v1.94 per-subdir `local/<basename>-<hash>` indexes.
+
+Re-indexing the *same* subdir still succeeds (incremental re-index path
+unchanged). Repos without an `origin` remote keep v1.94 per-subdir
+behavior, so the refuse never fires for them.
+
+**Recommendation: skip 1.95.0, install 1.95.1.** No data lost on
+upgrade — the regression only triggered when a user actively re-ran
+`index` against a different subdir of an already-indexed clone.
+
 ## [1.95.0] — 2026-05-10 — Git-root-aware index identity (#288 phase 1)
 
 First slice of [#288](https://github.com/jgravelle/jcodemunch-mcp/issues/288).
