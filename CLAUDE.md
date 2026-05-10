@@ -1,9 +1,9 @@
 # jcodemunch-mcp — Project Brief
 
 ## Current State
-- **Version:** 1.104.0 (find_implementations + check_delete_safe: F-15 symbol navigation + deletion preflight — Serena parity)
+- **Version:** 1.104.1 (check_delete_safe test-importer classification fix — dogfood-discovered)
 - **INDEX_VERSION:** 16
-- **Tests:** 4227 passed, 7 skipped (1.104.0)
+- **Tests:** 4228 passed, 7 skipped (1.104.1)
 - **Python:** >=3.10
 
 ## Key Files

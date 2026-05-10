@@ -89,16 +89,28 @@ class TestCheckDeleteSafeEntryPoint:
 
 class TestCheckDeleteSafeTestOnly:
     def test_test_only_reference_returns_test_coverage_only(self, tmp_path):
+        """Regression (v1.104.1): when the only importer is a test file, the
+        verdict must be test_coverage_only — not external_uses_blocking.
+        Previously file-level test importers were counted as external imports."""
         repo, storage = _make_repo(tmp_path, _TEST_ONLY_REPO)
         result = check_delete_safe(repo, symbol="helper_function", storage_path=storage)
         assert "error" not in result
-        # External import is from a test file — tier should reflect that
-        # (could be test_coverage_only, external_uses_blocking depending on which
-        # signal fires first; both are reasonable)
-        assert result["verdict"] in {
-            "test_coverage_only", "external_uses_blocking", "internal_only",
-            "safe_to_delete",
-        }
+        assert result["verdict"] == "test_coverage_only", (
+            f"expected test_coverage_only when sole importer is a test file, "
+            f"got {result['verdict']} with signals={result.get('signals')}"
+        )
+        # The recommended_action should mention removing the tests.
+        assert "test" in result["recommended_action"].lower()
+
+    def test_test_import_count_surfaced_separately(self, tmp_path):
+        """test_import_count is a distinct signal from external_import_count."""
+        repo, storage = _make_repo(tmp_path, _TEST_ONLY_REPO)
+        result = check_delete_safe(repo, symbol="helper_function", storage_path=storage)
+        sigs = result.get("signals", {})
+        assert "test_import_count" in sigs
+        assert sigs["test_import_count"] >= 1
+        # When only tests import, external_import_count should stay at 0
+        assert sigs["external_import_count"] == 0
 
 
 class TestCheckDeleteSafeOutput:

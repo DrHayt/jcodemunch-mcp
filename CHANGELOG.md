@@ -2,6 +2,27 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.104.1] — 2026-05-10 — fix: `check_delete_safe` test-importer classification
+
+Dogfood-discovered bug: when the only importer of a symbol's file was a test file,
+`check_delete_safe` returned `external_uses_blocking` instead of `test_coverage_only`.
+Test-file importers were folded into `external_import_count` before the verdict
+selector could downgrade to the test-only tier.
+
+### Fix
+
+- Track `test_import_count` as a distinct signal from `external_import_count`
+- Verdict selector now tests `test_import_count` (combined with `test_ref_count`)
+  before falling through to `safe_to_delete`
+- Blocker `kind` for test-file importers changed from `external_import` to `test_import`
+- `signals` dict now surfaces `test_import_count` separately so callers can audit
+
+### Regression test
+
+Added `test_test_only_reference_returns_test_coverage_only` (tightened from the
+previous permissive assertion) and `test_test_import_count_surfaced_separately`.
+Full suite: 4228 passed, 7 skipped.
+
 ## [1.104.0] — 2026-05-10 — `find_implementations` + `check_delete_safe`: F-15 Serena parity
 
 Closes two real gaps against [Serena](https://github.com/oraios/serena) — concrete-impl
@@ -114,9 +135,10 @@ churn, tracks the last breaking change from provenance, and folds in
 runtime evidence when traces exist. Pairs with `get_cross_repo_map`: that
 gives the repo-level dep graph; this zooms to the symbol-level surface.
 
-The MunchMaster suite itself is the case study — jcm / jdocmunch /
-jdatamunch / jragmunch / observatory is exactly the multi-repo shape this
-tool is built for. Treat it as `get_group_contracts(repos=[*the_suite*])`.
+Built for monorepos and microservice groups with real cross-repo named
+imports — Pydantic-using FastAPI applications, Spring Boot microservice
+suites, dbt projects sharing macros, anywhere two or more indexed repos
+import symbols from each other.
 
 ### Parameters
 

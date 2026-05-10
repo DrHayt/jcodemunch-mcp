@@ -179,7 +179,10 @@ def check_delete_safe(
         })
 
     # ── Signal 2: file-level importers (cross_repo when requested) ─────
+    # Test-file importers are tracked separately so the verdict can correctly
+    # downgrade to test_coverage_only when nothing but tests imports the file.
     external_import_count = 0
+    test_import_count = 0
     cross_repo_count = 0
     try:
         from .find_importers import find_importers  # noqa: PLC0415
@@ -199,15 +202,20 @@ def check_delete_safe(
             else:
                 imp_file = entry.get("file", "")
                 if imp_file and imp_file != target_file:
-                    external_import_count += 1
-                    blockers.append({
-                        "kind": "external_import",
-                        "file": imp_file,
-                        "severity": (
-                            _SEVERITY_TEST_ONLY if _is_test_file(imp_file)
-                            else _SEVERITY_EXTERNAL_IMPORT
-                        ),
-                    })
+                    if _is_test_file(imp_file):
+                        test_import_count += 1
+                        blockers.append({
+                            "kind": "test_import",
+                            "file": imp_file,
+                            "severity": _SEVERITY_TEST_ONLY,
+                        })
+                    else:
+                        external_import_count += 1
+                        blockers.append({
+                            "kind": "external_import",
+                            "file": imp_file,
+                            "severity": _SEVERITY_EXTERNAL_IMPORT,
+                        })
     except Exception as exc:  # noqa: BLE001
         logger.debug("check_delete_safe: find_importers skipped: %s", exc, exc_info=True)
 
@@ -260,23 +268,28 @@ def check_delete_safe(
         })
 
     # ── Verdict selection ──────────────────────────────────────────────
-    # Order matters — most restrictive first.
+    # Order matters — most restrictive first. Tests are counted separately
+    # from external imports so test-only consumption downgrades the verdict.
+    total_test_signals = test_ref_count + test_import_count
+    total_external_signals = external_import_count
+    total_internal_signals = internal_ref_count
+
     if runtime_hits and runtime_hits > 0:
         verdict = "runtime_observed"
     elif entry_signal:
         verdict = "entry_point"
     elif cross_repo_count > 0:
         verdict = "cross_repo_blocking"
-    elif external_import_count > 0:
+    elif total_external_signals > 0:
         verdict = "external_uses_blocking"
-    elif internal_ref_count > 0:
+    elif total_internal_signals > 0:
         verdict = "internal_uses_blocking"
-    elif test_ref_count > 0:
+    elif total_test_signals > 0:
         verdict = "test_coverage_only"
-    elif (internal_ref_count == 0 and external_import_count == 0 and test_ref_count == 0
-          and dead_code_conf >= 0.9):
+    elif dead_code_conf >= 0.9:
         verdict = "safe_to_delete"
-    elif internal_ref_count == 0 and external_import_count == 0 and test_ref_count == 0:
+    elif (total_internal_signals == 0 and total_external_signals == 0
+          and total_test_signals == 0):
         # No refs at all, but dead-code analysis didn't reach high confidence.
         # Still surface as safe with a slightly lower confidence score.
         verdict = "safe_to_delete"
@@ -353,6 +366,7 @@ def check_delete_safe(
         "recommended_action": actions.get(verdict, "Review blockers before deletion."),
         "signals": {
             "external_import_count": external_import_count,
+            "test_import_count": test_import_count,
             "cross_repo_count": cross_repo_count,
             "internal_ref_count": internal_ref_count,
             "test_ref_count": test_ref_count,
