@@ -84,8 +84,11 @@ _CANONICAL_TOOL_NAMES: tuple[str, ...] = (
     "set_tool_tier", "announce_model",
     # Composite retrieval
     "winnow_symbols",
-    # Runtime trace ingest (Phase 1)
+    # Runtime trace ingest + analytics (Phase 1-3)
     "import_runtime_signal",
+    "get_runtime_coverage",
+    "find_hot_paths",
+    "find_unused_paths",
     # Self-guide (force-included; lets one-line CLAUDE.md pull full policy on demand)
     "jcodemunch_guide",
 )
@@ -109,7 +112,8 @@ _TOOL_TIER_CORE: frozenset[str] = frozenset({
 
 _TOOL_TIER_STANDARD: frozenset[str] = _TOOL_TIER_CORE | frozenset({
     # Indexing extras
-    "summarize_repo", "embed_repo", "import_runtime_signal",
+    "summarize_repo", "embed_repo",
+    "import_runtime_signal", "get_runtime_coverage", "find_hot_paths", "find_unused_paths",
     # Discovery extras
     "suggest_queries", "search_columns",
     # Relationships
@@ -830,6 +834,96 @@ def _build_tools_list() -> list[Tool]:
                     },
                 },
                 "required": ["path"],
+            },
+        ),
+        Tool(
+            name="get_runtime_coverage",
+            description=(
+                "Runtime coverage histogram for a repo or a single file: count of "
+                "indexed symbols with vs without runtime evidence, plus the diagnostic "
+                "list of unmapped runtime spans (likely reflective dispatch the AST "
+                "missed). Pairs with Phase 2's per-result _runtime_confidence stamping. "
+                "Returns coverage_pct=0 with sources=[] when no traces have been ingested."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "repo": {"type": "string", "description": "Repository identifier (owner/name)"},
+                    "file_path": {
+                        "type": "string",
+                        "description": "Optional repo-relative file path. When set, scopes the histogram to this file.",
+                    },
+                    "unmapped_limit": {
+                        "type": "integer",
+                        "description": "Cap on the unmapped_runtime list (default 50)",
+                        "default": 50,
+                    },
+                },
+                "required": ["repo"],
+            },
+        ),
+        Tool(
+            name="find_hot_paths",
+            description=(
+                "Top-N symbols ranked by total runtime hit count across ingested traces, "
+                "with per-symbol p50/p95 latency, sources contributing, and last_seen. "
+                "Optionally filtered by a name substring. Pairs with get_blast_radius to "
+                "answer 'is this PR touching code that runs 4M times/day?' Returns an "
+                "empty results list when no traces have been ingested."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "repo": {"type": "string", "description": "Repository identifier (owner/name)"},
+                    "query": {
+                        "type": "string",
+                        "description": "Optional case-insensitive substring filter on symbol name",
+                    },
+                    "top_n": {
+                        "type": "integer",
+                        "description": "Cap on returned rows (default 20, max 200)",
+                        "default": 20,
+                    },
+                },
+                "required": ["repo"],
+            },
+        ),
+        Tool(
+            name="find_unused_paths",
+            description=(
+                "Symbols with zero (or stale) runtime hits over the look-back window. "
+                "Distinct from find_dead_code: this surfaces code that's reachable on "
+                "paper but never executed — only possible to detect with runtime data. "
+                "Excludes test files and entry-point filenames by default. Returns an "
+                "empty results list when no traces have been ingested (refuses to flag "
+                "every symbol as 'unused' against an empty runtime baseline)."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "repo": {"type": "string", "description": "Repository identifier (owner/name)"},
+                    "since_days": {
+                        "type": "integer",
+                        "description": "Look-back window in days (default 90)",
+                        "default": 90,
+                    },
+                    "include_tests": {
+                        "type": "boolean",
+                        "description": "Include symbols in test files",
+                        "default": False,
+                    },
+                    "include_entry_points": {
+                        "type": "boolean",
+                        "description": "Include symbols in entry-point filenames (main.py, wsgi.py, etc.)",
+                        "default": False,
+                    },
+                    "max_results": {
+                        "type": "integer",
+                        "description": "Cap on returned rows (default 200, max 1000)",
+                        "default": 200,
+                    },
+                },
+                "required": ["repo"],
             },
         ),
         Tool(
@@ -3245,6 +3339,41 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                     storage_path=storage_path,
                 )
             )
+        elif name == "get_runtime_coverage":
+            from .tools.get_runtime_coverage import get_runtime_coverage
+            result = await asyncio.to_thread(
+                functools.partial(
+                    get_runtime_coverage,
+                    repo=arguments["repo"],
+                    file_path=arguments.get("file_path"),
+                    unmapped_limit=arguments.get("unmapped_limit", 50),
+                    storage_path=storage_path,
+                )
+            )
+        elif name == "find_hot_paths":
+            from .tools.find_hot_paths import find_hot_paths
+            result = await asyncio.to_thread(
+                functools.partial(
+                    find_hot_paths,
+                    repo=arguments["repo"],
+                    query=arguments.get("query"),
+                    top_n=arguments.get("top_n", 20),
+                    storage_path=storage_path,
+                )
+            )
+        elif name == "find_unused_paths":
+            from .tools.find_unused_paths import find_unused_paths
+            result = await asyncio.to_thread(
+                functools.partial(
+                    find_unused_paths,
+                    repo=arguments["repo"],
+                    since_days=arguments.get("since_days", 90),
+                    include_tests=arguments.get("include_tests", False),
+                    include_entry_points=arguments.get("include_entry_points", False),
+                    max_results=arguments.get("max_results", 200),
+                    storage_path=storage_path,
+                )
+            )
         elif name == "list_repos":
             from .tools.list_repos import list_repos
             result = await asyncio.to_thread(
@@ -4840,7 +4969,10 @@ def _generate_claude_md_snippet(missing_only: bool = False) -> str:
         ("Utilities", ["get_session_stats", "analyze_perf", "tune_weights", "check_embedding_drift",
                         "invalidate_cache", "test_summarizer",
                         "audit_agent_config", "get_watch_status"]),
-        ("Runtime Trace Ingest", ["import_runtime_signal"]),
+        ("Runtime Trace Ingest & Analytics", [
+            "import_runtime_signal", "get_runtime_coverage",
+            "find_hot_paths", "find_unused_paths",
+        ]),
         ("Runtime Tier Switching", ["set_tool_tier", "announce_model"]),
         ("Self-Guide", ["jcodemunch_guide"]),
     ]

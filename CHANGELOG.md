@@ -2,6 +2,47 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.97.1] — 2026-05-10 — Phase 3: runtime analytics tools
+
+Three new MCP tools that turn the runtime tables (Phase 0-2) into
+agent-actionable signals. No schema changes; INDEX_VERSION stays at 14.
+
+- **`get_runtime_coverage(repo, file_path?)`** — coverage histogram for
+  a repo or a single file. Returns `{total_symbols, confirmed,
+  declared_only, coverage_pct, sources, last_seen, unmapped_runtime[]}`.
+  The `unmapped_runtime` list surfaces span groups that pointed at code
+  the AST extractor didn't catch — likely reflective dispatch.
+  Read-only / immutable connection so the LRU cache is preserved.
+- **`find_hot_paths(repo, query?, top_n=20)`** — top-N symbols ranked
+  by total runtime hit count. Each row carries `runtime_count`,
+  `p50_ms`, `p95_ms`, `sources`, `first_seen`, `last_seen`. Optional
+  case-insensitive substring filter on name. Pairs with
+  `get_blast_radius` so the agent learns "this PR touches a function
+  called 4M times/day" before deciding review depth.
+- **`find_unused_paths(repo, since_days=90, ...)`** — symbols with zero
+  (or stale) runtime hits over the look-back window. Distinct from
+  `find_dead_code` (static-only): catches code reachable on paper but
+  never executed. Excludes test files and entry-point filenames by
+  default; tunable via `include_tests` / `include_entry_points`.
+  Refuses to flag any symbol when `runtime_calls` is empty (otherwise
+  every symbol would trivially qualify).
+
+### Added to standard tier
+
+All three tools are in the standard tool profile, available to
+Sonnet/GPT-4o/Gemini-class agents by default.
+
+### Tests
+
+15 new tests in `tests/test_runtime_phase3.py` covering coverage
+histogram (zero-traces / repo-wide / file-scoped / unmapped surfacing /
+unknown-repo error), hot-paths (empty / ranking / filtering / top-n
+clamp), and unused-paths (no-runtime refusal / dark-symbol detection /
+test-file inclusion toggle / entry-point inclusion toggle / reason
+classification / meta counts). Suite: **4088 passed**, 7 skipped.
+
+Schema-budget baseline refreshed for the three new tool schemas.
+
 ## [1.97.0] — 2026-05-10 — Runtime trace ingestion (Phases 0-2)
 
 First runtime-aware release. Static call graph + ingested OTel trace data
