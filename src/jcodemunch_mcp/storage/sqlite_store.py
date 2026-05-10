@@ -121,7 +121,7 @@ _NON_REPO_DB_FILES = frozenset({"telemetry.db"})
 # Keys stored in the meta table
 _META_KEYS = [
     "repo", "owner", "name", "indexed_at", "index_version",
-    "git_head", "source_root", "display_name",
+    "git_head", "source_root", "git_root", "display_name",
     "languages", "context_metadata",
 ]
 
@@ -792,6 +792,7 @@ class SQLiteIndexStore:
             git_head=delta.get("git_head", base_index.git_head),
             file_summaries=composed_summaries,
             source_root=base_index.source_root,
+            git_root=getattr(base_index, "git_root", "") or "",
             file_languages=composed_languages,
             display_name=base_index.display_name,
             imports=composed_imports,
@@ -845,6 +846,7 @@ class SQLiteIndexStore:
         file_blob_shas: Optional[dict[str, str]] = None,
         file_mtimes: Optional[dict[str, int]] = None,
         package_names: Optional[list[str]] = None,
+        git_root: str = "",
     ) -> "CodeIndex":
         """Save a full index to SQLite. Replaces all existing data."""
         _ensure_index_store_deps()
@@ -891,6 +893,7 @@ class SQLiteIndexStore:
             git_head=git_head,
             file_summaries=file_summaries or {},
             source_root=source_root,
+            git_root=git_root,
             file_languages=file_languages,
             display_name=display_name or name,
             imports=imports if imports is not None else {},
@@ -1851,6 +1854,7 @@ class SQLiteIndexStore:
             git_head=meta.get("git_head", old.git_head),
             file_summaries=new_file_summaries,
             source_root=old.source_root,
+            git_root=getattr(old, "git_root", "") or "",
             file_languages=new_file_languages,
             display_name=old.display_name,
             imports=new_imports,
@@ -1937,6 +1941,7 @@ class SQLiteIndexStore:
             git_head=meta.get("git_head", ""),
             file_summaries=file_summaries,
             source_root=meta.get("source_root", ""),
+            git_root=meta.get("git_root", ""),
             file_languages=file_languages,
             display_name=meta.get("display_name", name),
             imports=imports,
@@ -1958,6 +1963,7 @@ class SQLiteIndexStore:
             "index_version": str(index.index_version),
             "git_head": index.git_head,
             "source_root": index.source_root,
+            "git_root": getattr(index, "git_root", "") or "",
             "display_name": index.display_name,
             "languages": json.dumps(index.languages),
             "context_metadata": json.dumps(index.context_metadata or {}),
@@ -2106,6 +2112,7 @@ class SQLiteIndexStore:
                 "index_version": str(data.get("index_version", _INDEX_VERSION)),
                 "git_head": data.get("git_head", ""),
                 "source_root": data.get("source_root", ""),
+                "git_root": data.get("git_root", ""),
                 "display_name": data.get("display_name", name),
                 "languages": json.dumps(computed_languages),
                 "context_metadata": json.dumps(data.get("context_metadata", {})),

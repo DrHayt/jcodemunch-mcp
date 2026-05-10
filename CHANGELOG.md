@@ -2,6 +2,53 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.95.0] — 2026-05-10 — Git-root-aware index identity (#288 phase 1)
+
+First slice of [#288](https://github.com/jgravelle/jcodemunch-mcp/issues/288).
+When indexing a local clone, jcodemunch now walks up looking for a
+`.git/` directory and — if it finds one with an `origin` remote
+configured — derives the storage identity from that remote.  A clone of
+`https://github.com/elastic/kibana` now indexes as `elastic/kibana`,
+matching what `index_repo elastic/kibana` would produce, regardless of
+the local folder name.
+
+**Re-index recommended** — `INDEX_VERSION` bumped 11 → 12 to add the
+`git_root` manifest field (foundation for v1.96 subdir merging).  Old
+v11 indexes load fine with an empty default; identity is set at *create*
+time, so a fresh re-index gives you the new naming.
+
+### Identity rules
+
+* `.git/` found, `origin` remote parses to `owner/repo` → identity is
+  `owner/repo`.  Covers GitHub, GitLab, Bitbucket, ssh/https URLs, with
+  or without `.git` suffix, with or without trailing slash.
+* `.git/` found, no usable `origin` → identity stays
+  `local/<basename>-<hash>` (v1.94 behavior) so unrelated local
+  projects with the same folder basename never collide.
+* No `.git/` anywhere up the tree → identity stays
+  `local/<basename>-<hash>` (v1.94 behavior).
+
+### Collision guard
+
+Indexing a second working tree (different `git_root`) of an
+already-indexed remote refuses with a clear error rather than silently
+overwriting.  Two clones of `elastic/kibana` at different paths now
+require either deleting one or opting out of git-root identity.
+
+### Opt-out
+
+Set `git_root_identity: false` in `~/.code-index/config.jsonc` (or
+`JCODEMUNCH_GIT_ROOT_IDENTITY=0`) to disable the new behavior and keep
+the v1.94 basename-plus-hash identity for everything.
+
+### What this *does not* do yet
+
+The bigger ask in #288 — making `index ./packages` and `index ./scripts`
+coalesce into one `elastic/kibana` index instead of four scattered
+ones — is **v1.96**.  v1.95 lays the foundation: `git_root` is now on
+the manifest, so the merge logic has somewhere to anchor.  Indexing
+subdirs still produces separate indexes today.
+
 ## [1.94.0] — 2026-05-09 — Symbol-aware selective re-export tracking
 
 Closes [#286](https://github.com/jgravelle/jcodemunch-mcp/issues/286).

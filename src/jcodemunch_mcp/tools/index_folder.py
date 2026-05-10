@@ -188,6 +188,45 @@ def _local_repo_name(folder_path: Path) -> str:
     return f"{folder_path.name}-{digest}"
 
 
+def _resolve_repo_identity(folder_path: Path) -> tuple[str, str, str]:
+    """Resolve the storage identity for an indexing run.
+
+    Returns ``(owner, repo_name, git_root)``.  ``git_root`` is the
+    absolute path of the enclosing git working tree when one was detected
+    and used for the identity, else the empty string.
+
+    v1.95.0 (#288): when the path resolves into a git working tree and
+    the ``git_root_identity`` config knob is on (default), the identity
+    comes from ``git remote get-url origin`` so a clone of
+    ``elastic/kibana`` indexes as ``elastic/kibana`` regardless of the
+    local folder name — matching what ``index_repo elastic/kibana``
+    would produce.  Falls back to ``("local", git-root-basename)`` for
+    git roots with no configured remote, and to today's
+    basename-plus-hash form when no ``.git`` is found anywhere up the
+    tree or when the knob is off.
+    """
+    if _config.get("git_root_identity", True, repo=str(folder_path)):
+        try:
+            from ..storage.git_root import detect_git_root
+            ident = detect_git_root(str(folder_path))
+        except Exception:
+            logger.debug("git-root detection failed", exc_info=True)
+            ident = None
+        if ident is not None:
+            if ident.owner == "local":
+                # Git working tree without a usable `origin` remote.
+                # Preserve today's basename-plus-hash identity so unrelated
+                # local projects that share a folder basename never
+                # collide.  We still record the git_root on the manifest
+                # for v1.96 merge logic to use.
+                return "local", _local_repo_name(folder_path), ident.git_root
+            # Configured remote — use `<owner>/<name>` identity (matches
+            # what `index_repo <owner>/<name>` produces for the same repo).
+            return ident.owner, ident.name, ident.git_root
+    # No git working tree, or knob disabled: pre-v1.95 basename-plus-hash.
+    return "local", _local_repo_name(folder_path), ""
+
+
 from ._indexing_pipeline import (
     file_languages_for_paths as _file_languages_for_paths,
     language_counts as _language_counts,
@@ -676,8 +715,9 @@ def index_folder(
         # discovery (~3s on Windows) and only process the affected files.
         if changed_paths and incremental:
             _pairs = parse_path_map()
-            repo_name = _local_repo_name(Path(remap(str(folder_path), _pairs, reverse=True)))
-            owner = "local"
+            owner, repo_name, _git_root = _resolve_repo_identity(
+                Path(remap(str(folder_path), _pairs, reverse=True))
+            )
             store = IndexStore(base_path=storage_path)
 
             # Branch detection for watcher fast-path
@@ -1022,9 +1062,34 @@ def index_folder(
 
         # Create repo identifier from folder path
         _pairs = parse_path_map()
-        repo_name = _local_repo_name(Path(remap(str(folder_path), _pairs, reverse=True)))
-        owner = "local"
+        owner, repo_name, _git_root = _resolve_repo_identity(
+            Path(remap(str(folder_path), _pairs, reverse=True))
+        )
         store = IndexStore(base_path=storage_path)
+
+        # v1.95.0: when an existing index at this identity was built from a
+        # different working tree, refuse rather than silently overwriting it.
+        # Two clones of the same repo at different paths would otherwise
+        # collapse into one storage entry. Users can opt out via
+        # `git_root_identity: false` to keep the per-path basename identity.
+        _existing_for_collision = store.load_index(owner, repo_name)
+        if (
+            _git_root
+            and _existing_for_collision is not None
+            and getattr(_existing_for_collision, "git_root", "")
+            and _existing_for_collision.git_root != _git_root
+        ):
+            return {
+                "success": False,
+                "error": (
+                    f"Index '{owner}/{repo_name}' already exists at "
+                    f"'{_existing_for_collision.git_root}'. Indexing a "
+                    f"second working tree at '{_git_root}' would overwrite "
+                    "it. Set `git_root_identity: false` in config (or "
+                    "JCODEMUNCH_GIT_ROOT_IDENTITY=0) to keep per-path "
+                    "indexes, or delete the existing index first."
+                ),
+            }
 
         # ── Branch-aware indexing ──
         # Detect current git branch. If a base index exists and we're on a
@@ -1476,7 +1541,7 @@ def index_folder(
                     source_root=str(folder_path), file_languages=file_languages,
                     display_name=folder_path.name, imports=file_imports,
                     context_metadata=full_context_metadata, file_mtimes=file_mtimes,
-                    package_names=_pkg_names,
+                    package_names=_pkg_names, git_root=_git_root,
                 )
         else:
             index = store.save_index(
@@ -1496,6 +1561,7 @@ def index_folder(
                 context_metadata=full_context_metadata,
                 file_mtimes=file_mtimes,
                 package_names=_pkg_names,
+                git_root=_git_root,
             )
 
         # Identify languages that were indexed (symbols found) but have no import extractor
