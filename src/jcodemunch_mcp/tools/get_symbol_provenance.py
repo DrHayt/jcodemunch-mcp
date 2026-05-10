@@ -17,9 +17,11 @@ from __future__ import annotations
 
 import logging
 import re
+import sqlite3
 import subprocess
 import time
 from collections import Counter
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from ..storage import IndexStore
@@ -99,6 +101,87 @@ def _extract_intent(message: str) -> str:
         return stripped
 
     return lines[0]  # fall back to subject
+
+
+# ---------------------------------------------------------------------------
+# Phase 5 — runtime stack-frequency enrichment
+# ---------------------------------------------------------------------------
+
+
+def _load_stack_frequency(
+    db_path,
+    symbol_id: str,
+    since_days: int,
+) -> Optional[dict]:
+    """Return the per-severity stack-event frequency for ``symbol_id``.
+
+    Reads ``runtime_stack_events`` over the last ``since_days``. Returns
+    None when:
+      * the table doesn't exist (pre-v16 DB),
+      * the table exists but has no rows for this symbol within the window,
+      * the table is empty entirely (no stack logs ingested).
+
+    Read-only / immutable connection so the LRU cache can't be evicted
+    by an mtime bump (matches the Phase 2 confidence-probe pattern).
+    """
+    try:
+        conn = sqlite3.connect(f"file:{db_path}?mode=ro&immutable=1", uri=True)
+    except sqlite3.OperationalError:
+        return None
+    conn.row_factory = sqlite3.Row
+    try:
+        try:
+            row = conn.execute(
+                "SELECT 1 FROM runtime_stack_events LIMIT 1"
+            ).fetchone()
+        except sqlite3.OperationalError:
+            return None
+        if row is None:
+            return None
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=max(1, since_days))).strftime(
+            "%Y-%m-%dT%H:%M:%SZ"
+        )
+        rows = conn.execute(
+            """
+            SELECT severity, SUM(count) AS total, MAX(last_seen) AS last_seen,
+                   MIN(first_seen) AS first_seen
+            FROM runtime_stack_events
+            WHERE symbol_id = ? AND last_seen >= ?
+            GROUP BY severity
+            """,
+            (symbol_id, cutoff),
+        ).fetchall()
+    finally:
+        conn.close()
+
+    if not rows:
+        return None
+
+    by_sev: dict[str, int] = {"error": 0, "warn": 0, "info": 0}
+    last_seen: Optional[str] = None
+    first_seen: Optional[str] = None
+    for r in rows:
+        sev = (r["severity"] or "info").lower()
+        if sev not in by_sev:
+            by_sev[sev] = 0
+        by_sev[sev] += int(r["total"] or 0)
+        ls = r["last_seen"]
+        fs = r["first_seen"]
+        if ls and (last_seen is None or ls > last_seen):
+            last_seen = ls
+        if fs and (first_seen is None or fs < first_seen):
+            first_seen = fs
+
+    total = sum(by_sev.values())
+    if total == 0:
+        return None
+    return {
+        "since_days": since_days,
+        "total_events": total,
+        "by_severity": by_sev,
+        "first_seen": first_seen,
+        "last_seen": last_seen,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -311,8 +394,27 @@ def get_symbol_provenance(
     # Generate narrative
     narrative = _build_narrative(sym_name, sym_kind, lineage, authors_ranked, dominant_category, lifespan_days)
 
+    # Phase 5: optional runtime stack-frequency enrichment. Zero-cost when
+    # runtime_stack_events is empty (or the table doesn't exist on a
+    # pre-v16 DB). Surfaces the "this symbol last appeared in N error
+    # stacks over the past D days" signal.
+    db_path = store._sqlite._db_path(owner, name)  # type: ignore[attr-defined]
+    stack_freq = _load_stack_frequency(db_path, sym_id, since_days=30) if sym_id else None
+    if stack_freq is not None and stack_freq.get("by_severity", {}).get("error", 0) >= 3:
+        # Append a sentence to the narrative when the symbol shows up in
+        # production error stacks repeatedly — that's a load-bearing signal
+        # the static narrative can't otherwise convey.
+        err_n = stack_freq["by_severity"]["error"]
+        last = stack_freq.get("last_seen") or ""
+        narrative += (
+            f" Runtime: this symbol appeared in {err_n} error stack(s) over the "
+            f"past {stack_freq['since_days']} days"
+            + (f" (most recently {last})" if last else "")
+            + " — review it carefully."
+        )
+
     elapsed = (time.perf_counter() - t0) * 1000
-    return {
+    response: dict = {
         "repo": f"{owner}/{name}",
         "symbol": {
             "name": sym_name,
@@ -341,10 +443,15 @@ def get_symbol_provenance(
                 "lineage = commits from newest to oldest. "
                 "category = semantic classification of each commit. "
                 "intent = extracted motivation from commit body. "
-                "narrative = human-readable summary of the symbol's evolution."
+                "narrative = human-readable summary of the symbol's evolution. "
+                "stack_frequency (when present) = stack-frame appearances by "
+                "severity from runtime_stack_events; signals operational risk."
             ),
         },
     }
+    if stack_freq is not None:
+        response["stack_frequency"] = stack_freq
+    return response
 
 
 def _build_narrative(

@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from .. import config as _config_mod
-from ..runtime import VALID_SOURCES, ingest_otel_file, ingest_sql_log_file
+from ..runtime import VALID_SOURCES, ingest_otel_file, ingest_sql_log_file, ingest_stack_log_file
 from ..storage import IndexStore
 from .resolve_repo import resolve_repo
 
@@ -32,8 +32,8 @@ def import_runtime_signal(
 
     Args:
         source: One of ``{'otel', 'sql_log', 'stack_log', 'apm'}``. Phase 1
-            implemented ``'otel'``; Phase 4 added ``'sql_log'``;
-            ``'stack_log'`` lands in Phase 5; ``'apm'`` is reserved.
+            implemented ``'otel'``; Phase 4 added ``'sql_log'``; Phase 5
+            added ``'stack_log'``; ``'apm'`` is reserved.
         path: Path to the trace file.
         repo: Repo identifier as ``owner/name`` or just ``name``. If
             omitted, defaults to resolving the current working directory
@@ -61,12 +61,12 @@ def import_runtime_signal(
             "success": False,
             "error": f"unknown source {source!r}. Valid: {sorted(VALID_SOURCES)}",
         }
-    if source not in ("otel", "sql_log"):
+    if source not in ("otel", "sql_log", "stack_log"):
         return {
             "success": False,
             "error": (
                 f"source {source!r} is not yet implemented. "
-                "Phases 1+4 support source='otel' and source='sql_log'."
+                "Phases 1+4+5 support source='otel', 'sql_log', and 'stack_log'."
             ),
         }
 
@@ -110,8 +110,15 @@ def import_runtime_signal(
                 redact_enabled=redact_enabled,
                 max_rows=max_rows,
             )
-        else:  # sql_log
+        elif source == "sql_log":
             result = ingest_sql_log_file(
+                db_path=str(db_path),
+                file_path=path,
+                redact_enabled=redact_enabled,
+                max_rows=max_rows,
+            )
+        else:  # stack_log
+            result = ingest_stack_log_file(
                 db_path=str(db_path),
                 file_path=path,
                 redact_enabled=redact_enabled,

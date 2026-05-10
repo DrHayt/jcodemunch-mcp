@@ -807,10 +807,15 @@ def _build_tools_list() -> list[Tool]:
                 "repo. source='otel' takes OTel JSON / JSON-Lines / .gz and maps spans "
                 "via (file_path, line_no, function_name); source='sql_log' takes "
                 "pg_stat_statements CSV or a generic SQL JSON-Lines log and maps queries "
-                "via referenced tables (file-stem match) and dbt/SQLMesh column metadata. "
-                "Returns {records, mapped, unmapped, redactions_fired, unmapped_reasons, "
-                "evicted, columns_recorded?}. PII is redacted at the ingest chokepoint by "
-                "default. stack_log lands in Phase 5; apm is reserved."
+                "via referenced tables (file-stem match) and dbt/SQLMesh column metadata; "
+                "source='stack_log' takes a plain-text application log or JSON-Lines "
+                "record set with Python / JVM / Node.js tracebacks and writes to both "
+                "runtime_calls (severity-agnostic rollup) and runtime_stack_events "
+                "(per-severity counts: error/warn/info). Returns {records, mapped, "
+                "unmapped, redactions_fired, unmapped_reasons, evicted} plus source-"
+                "specific fields (columns_recorded for sql_log; severity_counts and "
+                "frames for stack_log). PII is redacted at the chokepoint by default. "
+                "apm is reserved."
             ),
             inputSchema={
                 "type": "object",
@@ -818,7 +823,7 @@ def _build_tools_list() -> list[Tool]:
                     "source": {
                         "type": "string",
                         "enum": ["otel", "sql_log", "stack_log", "apm"],
-                        "description": "Trace source format. Phases 1+4 accept 'otel' and 'sql_log'.",
+                        "description": "Trace source format. Phases 1+4+5 accept 'otel', 'sql_log', and 'stack_log'.",
                         "default": "otel",
                     },
                     "path": {
@@ -5724,10 +5729,10 @@ def main(argv: Optional[list[str]] = None):
     )
     _add_common_args(index_file_parser)
 
-    # --- import-trace (Phases 1 + 4: OTel + SQL log file ingest) ---
+    # --- import-trace (Phases 1 + 4 + 5: OTel + SQL log + stack log ingest) ---
     import_trace_parser = subparsers.add_parser(
         "import-trace",
-        help="Ingest a runtime trace file (OTel JSON / JSONL or SQL query log) into the runtime_* tables",
+        help="Ingest a runtime trace file (OTel / SQL log / stack log) into the runtime_* tables",
     )
     import_trace_parser.add_argument(
         "--otel",
@@ -5740,6 +5745,12 @@ def main(argv: Optional[list[str]] = None):
         dest="sql_log_path",
         metavar="PATH",
         help="Path to a pg_stat_statements CSV or generic SQL query JSON-Lines log",
+    )
+    import_trace_parser.add_argument(
+        "--stack-log",
+        dest="stack_log_path",
+        metavar="PATH",
+        help="Path to a plain-text app log or JSON-Lines record set with Python / JVM / Node.js stack traces",
     )
     import_trace_parser.add_argument(
         "--repo",
@@ -6422,25 +6433,30 @@ def main(argv: Optional[list[str]] = None):
 
         otel_path = getattr(args, "otel_path", None)
         sql_log_path = getattr(args, "sql_log_path", None)
-        if not otel_path and not sql_log_path:
+        stack_log_path = getattr(args, "stack_log_path", None)
+        provided = [p for p in (otel_path, sql_log_path, stack_log_path) if p]
+        if not provided:
             print(
-                "jcodemunch-mcp: error: import-trace requires either --otel <path> or --sql-log <path>",
+                "jcodemunch-mcp: error: import-trace requires one of --otel / --sql-log / --stack-log <path>",
                 file=sys.stderr,
             )
             sys.exit(2)
-        if otel_path and sql_log_path:
+        if len(provided) > 1:
             print(
-                "jcodemunch-mcp: error: import-trace accepts --otel OR --sql-log, not both. "
-                "Run the command twice if you have one of each.",
+                "jcodemunch-mcp: error: import-trace accepts exactly one of --otel / --sql-log / --stack-log. "
+                "Run the command once per source if you have multiple.",
                 file=sys.stderr,
             )
             sys.exit(2)
         if otel_path:
             source = "otel"
             trace_path = otel_path
-        else:
+        elif sql_log_path:
             source = "sql_log"
             trace_path = sql_log_path
+        else:
+            source = "stack_log"
+            trace_path = stack_log_path
         result = _import_runtime_signal(
             source=source,
             path=trace_path,

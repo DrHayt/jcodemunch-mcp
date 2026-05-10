@@ -2,68 +2,109 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
-## [Unreleased] — Phase 4: SQL query log ingest
+## [1.98.0] — 2026-05-10 — Phases 4 + 5: SQL log + stack-frame ingest
 
-Adds a second runtime signal source alongside OTel: pg_stat_statements
-CSV exports and generic SQL JSON-Lines logs. Maps each query to the
-indexed dbt/SQLMesh model symbols by referenced table, and records
-per-column reads against the existing `dbt_columns` / `sqlmesh_columns`
-context metadata. Closes the data-layer gap in the trace ingestion
-roadmap. INDEX_VERSION 14 → 15 with additive migration.
+Two new runtime signal sources: pg_stat_statements / generic SQL JSON-Lines
+(Phase 4) and Python / JVM / Node.js stack-frame logs (Phase 5). Together
+they take the runtime trace coverage from "what HTTP endpoints ran" to
+"every layer the request touched, including the data layer and every
+frame in every error stack." INDEX_VERSION 14 → 16 over two additive
+in-place migrations (v14→v15 and v15→v16). Existing OTel rows preserved.
 
-- **New schema**: `runtime_columns(model_name, column_name, source,
+### Phase 5 (new in this release)
+
+- **New schema**: `runtime_stack_events(symbol_id, source, severity,
   count, first_seen, last_seen)` table + two indexes
-  (`idx_runtime_columns_model`, `idx_runtime_columns_last_seen`).
-  Existing `runtime_calls` / `runtime_edges` / `runtime_imports` /
-  `runtime_unmapped` / `runtime_redaction_log` rows are preserved by
-  the v14→v15 in-place migration.
-- **New parser** at `runtime/sql_log.py`: handles pg_stat_statements
-  CSV exports (header detection — accepts both `total_time` /
-  `total_exec_time` / `mean_time` / `mean_exec_time` aliases for
-  Postgres-version compatibility), generic SQL JSON-Lines, top-level
-  JSON arrays, comment-prefixed lines, and `.gz` transparently. Pure
-  parsing; no DB writes.
+  (`idx_runtime_stack_events_severity`, `idx_runtime_stack_events_symbol`).
+  PK includes severity so a single symbol carries distinct rows for
+  error / warn / info; the symbol's `runtime_calls` row gets a
+  severity-agnostic rollup so existing confidence-stamping tools fire.
+- **New parser** at `runtime/stack_log.py`: handles three dialects in
+  one pass — Python tracebacks (`Traceback (most recent call last):`
+  + `File "...", line N, in <name>` pairs), JVM tracebacks
+  (`com.example.Foo: ...` + `    at pkg.Class.method(File.java:N)` +
+  flattened `Caused by:` chains), and Node.js stacks
+  (`Error: ...` + `    at funcName (file.js:N:N)` plus the anonymous
+  `    at file.js:N:N` form). Tolerates `node:events`-style module
+  paths in Node frames. JSON-Lines structured-log path with
+  explicit `severity` / `level` fields overrides the heuristic.
+  `.gz` transparent.
+- **Severity heuristic**: looks at the line introducing the trace +
+  three lines above for `FATAL` / `CRITICAL` / `ERROR` / `WARN[ING]` /
+  `INFO` tokens. Defaults to `info` because some pipelines log every
+  exception at info-level for post-hoc triage.
+- **New ingest orchestrator** `runtime/stack_ingest.py`: parse → redact
+  → resolve → upsert. Each frame's `(file, line, function)` runs through
+  the existing OTel resolver (suffix-match fallback for absolute trace
+  paths against repo-relative index paths). Stack-event upsert into
+  `runtime_stack_events` and severity-agnostic rollup into `runtime_calls`
+  share one transaction. FIFO eviction extended to also trim
+  `runtime_stack_events`.
+- **`import_runtime_signal({source: 'stack_log'})`**: third source wired
+  into the existing MCP tool. Returns `{records, frames, mapped, unmapped,
+  severity_counts: {error, warn, info}, redactions_fired,
+  unmapped_reasons, evicted}`. CLI: `jcodemunch-mcp import-trace
+  --stack-log <path>` mirrors `--otel` / `--sql-log`. Exactly one of the
+  three is required.
+- **`get_symbol_provenance` runtime enrichment**: new `stack_frequency`
+  block with per-severity counts over a 30-day window plus
+  `first_seen` / `last_seen`. When a symbol shows up in 3+ error stacks
+  the narrative gains an appended sentence — operational risk signal
+  the static git lineage couldn't otherwise convey. Read-only /
+  immutable connection so the LRU cache isn't evicted by an mtime bump
+  (matches the Phase 2 confidence-probe pattern). Zero-cost when
+  `runtime_stack_events` is empty or doesn't exist (pre-v16).
+- **Redaction**: every stack event's `message` field routes through the
+  same `redact_trace_record()` chokepoint with `source='stack_log'`;
+  `email_address`, `ipv4_address`, secrets registry, and friends fire
+  and tally into `runtime_redaction_log`.
+- **Tests**: 19 new tests in `tests/test_runtime_phase5.py` — Python /
+  JVM / Node parser corpus, severity-tag inference, JSON-Lines path,
+  end-to-end ingest (Python + JVM + Node), unmapped-frame routing,
+  redaction firing on email-bearing messages, idempotency under repeat
+  ingest, `get_symbol_provenance` integration (omits when empty,
+  surfaces when present), and v15→v16 migration idempotency.
+
+### Phase 4 (landed before v1.98.0; included here for completeness)
+
+- **Schema**: `runtime_columns(model_name, column_name, source, count,
+  first_seen, last_seen)` + 2 indexes; v14→v15 migration.
+- **Parser** at `runtime/sql_log.py`: pg_stat_statements CSV
+  (`total_time` / `total_exec_time` / `mean_time` / `mean_exec_time`
+  aliases honoured for Postgres-version compatibility) + generic
+  JSON-Lines + top-level array fallback + comment lines + `.gz`.
+  Pure parsing; no DB writes.
 - **Reference extraction**: regex-based — table refs from FROM / JOIN /
   INSERT INTO / UPDATE / DELETE FROM / MERGE INTO; column refs from
-  qualified `alias.col` plus bare identifiers in SELECT / WHERE / ON /
-  HAVING / GROUP BY / ORDER BY blocks. Schema-qualified names
-  (`analytics.fact_orders`) keep only the trailing identifier so they
+  qualified `alias.col` plus bare identifiers in SELECT / predicate
+  blocks. Schema-qualified names trim to trailing identifier so they
   match dbt model names. Tolerates quoted identifiers.
-- **New ingest orchestrator** `runtime/sql_ingest.py`:
-  parse → redact → resolve → upsert. Read-only resolver metadata
-  snapshot covers file-stem map (`.sql` files), exact-name map, and
-  declared dbt columns. Writer connection takes the runtime_calls /
-  runtime_columns / runtime_unmapped / runtime_redaction_log upserts
-  in one transaction; FIFO eviction trims all three runtime tables.
-- **`import_runtime_signal({source: 'sql_log', path: '...'})`**:
-  Phase 4 wires the second source into the existing MCP tool. Returns
-  the OTel-shaped envelope plus a new `columns_recorded` field.
-  CLI: `jcodemunch-mcp import-trace --sql-log <path>` mirrors the
-  existing `--otel` flag; supplying both is rejected.
-- **`find_unused_paths` dbt-aware extension**: when the index has
-  `dbt_columns`-style metadata AND `runtime_columns` has rows, the
-  tool now (a) rescues SQL-file model symbols that have at least one
-  observed column read (column-only audit-log shape), and (b) surfaces
-  models whose declared columns have zero hits with
-  `reason='dbt_model_no_column_reads'` plus an `unused_columns: [...]`
-  list. `_meta` gains `runtime_columns_present` and
-  `rescued_by_column_hit` counts.
-- **Redaction**: every SQL log query routes through the same
-  `redact_trace_record()` chokepoint; `sql_string_literal`,
-  `sql_numeric_param`, `email_address`, `ipv4_address`, and the
-  shared secrets registry all fire and tally into
-  `runtime_redaction_log` with `source='sql_log'`.
-- **Tests**: 26 new tests in `tests/test_runtime_phase4.py` covering
-  the parser (CSV + JSONL + .gz + array fallback + comment lines +
-  malformed line tolerance), reference extraction (FROM/JOIN/UPDATE/
-  DELETE/INSERT, schema qualifiers, quoted identifiers, keyword
-  filtering), end-to-end ingest (mapped + unmapped, idempotency,
-  column metadata gating, redaction firing), and `find_unused_paths`
-  integration (dbt model surfacing + column-only rescue). 4114 passed,
-  7 skipped.
+- **Orchestrator** `runtime/sql_ingest.py`: parse → redact → resolve →
+  upsert. Read-only resolver metadata snapshot covers file-stem map,
+  exact-name map, and declared dbt columns. Writer transaction upserts
+  runtime_calls + runtime_columns + runtime_unmapped + runtime_redaction_log.
+- **`import_runtime_signal({source: 'sql_log'})`** + CLI
+  `import-trace --sql-log <path>`.
+- **`find_unused_paths` dbt-aware extension**: rescues SQL-file model
+  symbols with observed column reads (column-only audit-log shape);
+  surfaces models whose declared columns have zero hits with
+  `reason='dbt_model_no_column_reads'` + `unused_columns: [...]` list.
+  `_meta` gains `runtime_columns_present` and `rescued_by_column_hit`.
+- **Tests**: 26 in `tests/test_runtime_phase4.py`.
 
-Phase 5 (stack-frame ingest) lands next; Phase 4 + 5 ship together as
-v1.98.0 per roadmap.
+### Total v1.98.0 footprint
+
+- INDEX_VERSION 14 → 16 (two additive migrations)
+- 4 new files: `runtime/sql_log.py`, `runtime/sql_ingest.py`,
+  `runtime/stack_log.py`, `runtime/stack_ingest.py`
+- 2 new tables (`runtime_columns`, `runtime_stack_events`) + 4 indexes
+- 45 new tests (26 Phase 4 + 19 Phase 5); suite at 4133 passed, 7 skipped
+- `import_runtime_signal` now accepts 3 of 4 source values (otel /
+  sql_log / stack_log; apm reserved)
+- `get_symbol_provenance` gains optional `stack_frequency` block
+
+Phase 6 (HTTP live-ingest endpoint) and Phase 7 (`get_pr_risk_profile`
+runtime weighting — the milestone capstone) follow.
 
 ## [1.97.1] — 2026-05-10 — Phase 3: runtime analytics tools
 

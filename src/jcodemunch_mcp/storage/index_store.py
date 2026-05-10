@@ -21,6 +21,11 @@ from .sqlite_store import SQLiteIndexStore, _VERIFIED_PATHS
 logger = logging.getLogger(__name__)
 
 # Bump this when the index schema changes in an incompatible way.
+# v16 (1.98.0): adds `runtime_stack_events(symbol_id, source, severity,
+# count, first_seen, last_seen)` table for Phase 5 stack-frame ingest.
+# Severity ∈ {error, warn, info} per stack frame; lets agents distinguish
+# "this symbol fired in 17 error stacks" from "fired once in INFO logging."
+# Tables 15-vintage upgrade in place via _migrate_v15_to_v16.
 # v15 (1.98.0): adds `runtime_columns(model_name, column_name, source,
 # count, last_seen, first_seen)` table for Phase 4 SQL-log ingest.
 # Tracks which dbt/SQLMesh model columns are actually read in production
@@ -39,7 +44,7 @@ logger = logging.getLogger(__name__)
 # relative to the indexed subdir (not the git root); they are
 # detected as old-format on first v1.96 indexing run and discarded
 # in favour of a fresh git-root-rooted walk.
-INDEX_VERSION = 15
+INDEX_VERSION = 16
 
 
 @functools.lru_cache(maxsize=16)

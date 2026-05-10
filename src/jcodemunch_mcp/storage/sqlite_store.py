@@ -161,6 +161,19 @@ CREATE TABLE IF NOT EXISTS runtime_columns (
 
 CREATE INDEX IF NOT EXISTS idx_runtime_columns_model ON runtime_columns(model_name);
 CREATE INDEX IF NOT EXISTS idx_runtime_columns_last_seen ON runtime_columns(last_seen);
+
+CREATE TABLE IF NOT EXISTS runtime_stack_events (
+    symbol_id   TEXT NOT NULL,
+    source      TEXT NOT NULL,
+    severity    TEXT NOT NULL,
+    count       INTEGER NOT NULL DEFAULT 0,
+    first_seen  TEXT,
+    last_seen   TEXT,
+    PRIMARY KEY (symbol_id, source, severity)
+);
+
+CREATE INDEX IF NOT EXISTS idx_runtime_stack_events_severity ON runtime_stack_events(severity, last_seen);
+CREATE INDEX IF NOT EXISTS idx_runtime_stack_events_symbol ON runtime_stack_events(symbol_id);
 """
 
 # Pragmas set on every connection open
@@ -501,6 +514,39 @@ def _migrate_v14_to_v15(conn: sqlite3.Connection) -> None:
     logger.info("Migrated v14→v15: added runtime_columns table for SQL-log ingest")
 
 
+def _migrate_v15_to_v16(conn: sqlite3.Connection) -> None:
+    """Migrate a v15 database to v16: add runtime_stack_events for Phase 5.
+
+    Existing runtime_calls / runtime_columns / etc. rows are preserved
+    verbatim. ``runtime_stack_events`` stays empty until
+    ``import_runtime_signal({source: 'stack_log'})`` runs against an
+    application log containing parseable Python / JVM / Node.js stacks.
+
+    The (symbol_id, source, severity) PK lets a single symbol carry a
+    distinct row per severity level; the symbol's runtime_calls row
+    gets a separate (severity-agnostic) rollup so confidence-stamping
+    on existing tools still works.
+    """
+    conn.executescript("""\
+        CREATE TABLE IF NOT EXISTS runtime_stack_events (
+            symbol_id   TEXT NOT NULL,
+            source      TEXT NOT NULL,
+            severity    TEXT NOT NULL,
+            count       INTEGER NOT NULL DEFAULT 0,
+            first_seen  TEXT,
+            last_seen   TEXT,
+            PRIMARY KEY (symbol_id, source, severity)
+        );
+        CREATE INDEX IF NOT EXISTS idx_runtime_stack_events_severity ON runtime_stack_events(severity, last_seen);
+        CREATE INDEX IF NOT EXISTS idx_runtime_stack_events_symbol ON runtime_stack_events(symbol_id);
+    """)
+    conn.execute(
+        "INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)",
+        ("index_version", "16"),
+    )
+    logger.info("Migrated v15→v16: added runtime_stack_events table for stack-log ingest")
+
+
 def _unlink_retry(path: Path, retries: int = 3, delay: float = 0.1) -> bool:
     """Delete a file with retry logic for Windows file-locking (PermissionError).
 
@@ -594,6 +640,8 @@ class SQLiteIndexStore:
                     _migrate_v13_to_v14(conn)
                 if stored_version < 15:
                     _migrate_v14_to_v15(conn)
+                if stored_version < 16:
+                    _migrate_v15_to_v16(conn)
 
             SQLiteIndexStore._initialized_dbs.add(db_key)
 

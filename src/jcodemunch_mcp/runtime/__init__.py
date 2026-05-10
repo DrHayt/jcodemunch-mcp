@@ -3,8 +3,10 @@
 Phase 0 shipped the schema, the redaction chokepoint, and the symbol
 resolver. Phase 1 added the OTel JSON file-import path. Phase 2 surfaced
 ``_runtime_confidence`` on five existing tools. Phase 3 added three new
-runtime-aware MCP tools. Phase 4 (this) adds SQL query log ingest +
-``runtime_columns`` table for dbt-style data layers.
+runtime-aware MCP tools. Phase 4 added SQL query log ingest +
+``runtime_columns`` table for dbt-style data layers. Phase 5 (this) adds
+application-log / stack-frame ingest + ``runtime_stack_events`` table
+for severity-tagged error-frequency tracking.
 
 Public surface:
 - redact_trace_record(record, source) — single redaction chokepoint
@@ -27,6 +29,8 @@ from .redact import redact_trace_record
 from .resolve import resolve_to_symbol_id
 from .sql_ingest import ingest_sql_log_file
 from .sql_log import SqlQueryRecord, parse_sql_log_file
+from .stack_ingest import ingest_stack_log_file
+from .stack_log import StackEvent, StackFrame, parse_stack_log_file
 
 VALID_SOURCES = frozenset({"otel", "sql_log", "stack_log", "apm"})
 
@@ -39,6 +43,10 @@ __all__ = [
     "parse_sql_log_file",
     "ingest_sql_log_file",
     "SqlQueryRecord",
+    "parse_stack_log_file",
+    "ingest_stack_log_file",
+    "StackEvent",
+    "StackFrame",
     "RuntimeConfidenceProbe",
     "attach_runtime_confidence",
     "attach_runtime_confidence_by_file",
