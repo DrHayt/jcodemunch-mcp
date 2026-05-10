@@ -105,6 +105,7 @@ is a byte the agent doesn't pay to read.
 ![Local-first](https://img.shields.io/badge/local--first-yes-brightgreen)
 ![Polyglot](https://img.shields.io/badge/parsing-tree--sitter-9cf)
 ![jMRI](https://img.shields.io/badge/jMRI-Full-blueviolet)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.20102349.svg)](https://doi.org/10.5281/zenodo.20102349)
 [![PyPI version](https://img.shields.io/pypi/v/jcodemunch-mcp)](https://pypi.org/project/jcodemunch-mcp/)
 [![PyPI - Python Version](https://img.shields.io/pypi/pyversions/jcodemunch-mcp)](https://pypi.org/project/jcodemunch-mcp/)
 
