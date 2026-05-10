@@ -67,7 +67,7 @@ _CANONICAL_TOOL_NAMES: tuple[str, ...] = (
     "render_diagram", "get_project_intel",
     # Quality & Metrics
     "get_symbol_complexity", "get_churn_rate", "get_hotspots",
-    "get_repo_health", "get_symbol_importance", "find_dead_code",
+    "get_repo_health", "get_symbol_importance", "get_repo_map", "find_dead_code",
     "get_dead_code_v2", "get_untested_symbols", "search_ast",
     # Diffs & Embeddings
     "get_symbol_diff", "embed_repo",
@@ -127,7 +127,7 @@ _TOOL_TIER_STANDARD: frozenset[str] = _TOOL_TIER_CORE | frozenset({
     "get_symbol_provenance", "get_pr_risk_profile",
     # Quality & Metrics
     "get_symbol_complexity", "get_churn_rate", "get_hotspots",
-    "get_symbol_importance", "find_dead_code", "get_dead_code_v2",
+    "get_symbol_importance", "get_repo_map", "find_dead_code", "get_dead_code_v2",
     "get_untested_symbols", "get_repo_health", "search_ast", "winnow_symbols",
     # Architecture
     "get_dependency_cycles", "get_coupling_metrics", "get_layer_violations",
@@ -2489,6 +2489,43 @@ def _build_tools_list() -> list[Tool]:
             },
         ),
         Tool(
+            name="get_repo_map",
+            description=(
+                "Query-less, token-budgeted, signature-level overview of a repository. "
+                "Groups symbols by file, ranks files by PageRank on the import graph, and "
+                "greedy-packs signatures (not bodies) under token_budget. Designed for "
+                "cold-start orientation — 'I just cloned this repo, what matters here?' — "
+                "the niche RepoMapper occupies. Pair with get_tectonic_map (module topology) "
+                "and get_ranked_context (query-driven) once you know what to ask for."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "repo": {"type": "string", "description": "Repository identifier (owner/repo or just repo name)"},
+                    "token_budget": {
+                        "type": "integer",
+                        "description": "Hard cap on returned tokens (default 2048).",
+                        "default": 2048,
+                    },
+                    "scope": {
+                        "type": "string",
+                        "description": "Optional glob to limit to a subdirectory (e.g. 'src/core/*').",
+                    },
+                    "max_per_file": {
+                        "type": "integer",
+                        "description": "Max signatures emitted per file (default 5, capped at 50).",
+                        "default": 5,
+                    },
+                    "include_kinds": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Optional list of symbol kinds to restrict results (e.g. ['class', 'function']).",
+                    },
+                },
+                "required": ["repo"],
+            },
+        ),
+        Tool(
             name="find_dead_code",
             description=(
                 "Find dead code — files and symbols with zero importers and no entry-point role. "
@@ -4033,6 +4070,19 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                     storage_path=storage_path,
                 )
             )
+        elif name == "get_repo_map":
+            from .tools.get_repo_map import get_repo_map
+            result = await asyncio.to_thread(
+                functools.partial(
+                    get_repo_map,
+                    repo=arguments["repo"],
+                    token_budget=arguments.get("token_budget", 2048),
+                    scope=arguments.get("scope"),
+                    max_per_file=arguments.get("max_per_file", 5),
+                    include_kinds=arguments.get("include_kinds"),
+                    storage_path=storage_path,
+                )
+            )
         elif name == "find_dead_code":
             from .tools.find_dead_code import find_dead_code
             result = await asyncio.to_thread(
@@ -5020,6 +5070,7 @@ def _generate_claude_md_snippet(missing_only: bool = False) -> str:
         ("Quality & Metrics", ["get_symbol_complexity", "get_churn_rate", "get_hotspots",
                                 "get_repo_health", "diff_health_radar",
                                 "get_file_risk", "get_symbol_importance",
+                                "get_repo_map",
                                 "find_dead_code", "get_dead_code_v2",
                                 "get_untested_symbols", "search_ast",
                                 "winnow_symbols"]),

@@ -1,9 +1,9 @@
 # jcodemunch-mcp — Project Brief
 
 ## Current State
-- **Version:** 1.100.0 (runtime trace ingestion: Phases 0-7 — milestone capstone)
+- **Version:** 1.101.0 (get_repo_map: cold-start orientation map — RepoMapper parity)
 - **INDEX_VERSION:** 16
-- **Tests:** 4165 passed, 7 skipped (1.100.0)
+- **Tests:** 4174 passed, 7 skipped (1.101.0)
 - **Python:** >=3.10
 
 ## Key Files
@@ -68,6 +68,7 @@ src/jcodemunch_mcp/
     get_symbol_provenance.py  # get_symbol_provenance: full git archaeology per symbol — authorship lineage, semantic commit classification, evolution narrative. Phase 5: optional stack_frequency block reading runtime_stack_events over a 30-day window — per-severity counts + first/last seen; narrative gains an appended sentence when error count >= 3
     get_pr_risk_profile.py    # get_pr_risk_profile: unified PR/branch risk assessment — fuses blast radius + complexity + churn + test gaps + volume into composite score. Phase 7: when runtime traces have been ingested, adds a 6th signal (runtime_traffic; W=0.15 with the static five rebalanced to 0.85 of their original weights) plus a runtime_dark_code_introduced flag for PRs that add code in files with zero runtime evidence. Static-only callers (no traces) keep the historical 5-signal mix bit-for-bit.
     get_hotspots.py           # get_hotspots: top-N high-risk symbols by complexity x churn
+    get_repo_map.py           # get_repo_map: query-less, token-budgeted, signature-level repo overview ranked by PageRank — cold-start orientation (RepoMapper parity). Reuses cached PageRank, emits signatures only (no bodies), greedy-packs per-file under token_budget
     get_tectonic_map.py       # get_tectonic_map: logical module topology via 3-signal fusion (structural+behavioral+temporal) + label propagation
     get_signal_chains.py      # get_signal_chains: entry-point-to-leaf pathway discovery; traces how HTTP/CLI/task/event signals propagate through the call graph; discovery + lookup modes
     render_diagram.py         # render_diagram: universal Mermaid renderer; auto-detects source tool, picks optimal diagram type (flowchart/sequence), encodes metadata as visual signals; 3 themes, smart pruning; optional `open_in_viewer` (config-gated, spawns mmd-viewer)

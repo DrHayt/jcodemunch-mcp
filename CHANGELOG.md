@@ -2,6 +2,47 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.101.0] — 2026-05-10 — `get_repo_map`: cold-start orientation map
+
+Closes the one feature gap RepoMapper still occupied: the query-less,
+token-budgeted, signature-level repo overview for "I just cloned this
+repo — what matters here?" Every other RepoMapper capability is already
+covered by existing tools (PageRank via `get_symbol_importance`, token
+packing via `get_ranked_context`, richer multi-signal orientation via
+`get_tectonic_map`); this fills the last seam — no query required,
+signatures-only output for breadth per token.
+
+### `get_repo_map` (new tool, Quality & Metrics tier)
+
+- Groups symbols by file, ranks files by PageRank on the import graph,
+  and greedy-packs signatures (not source bodies) under `token_budget`.
+- Reuses the cached PageRank scores from `_bm25_cache` when scope is
+  unspecified — sub-millisecond on warm indexes.
+- Parameters: `repo` (required), `token_budget` (default 2048),
+  `scope` (optional glob), `max_per_file` (default 5, capped at 50),
+  `include_kinds` (optional list).
+- Per-file kind priority: class > function > method > type > constant,
+  ties broken by symbol byte length descending.
+- Skips files whose PageRank score is zero so leaf utilities aren't
+  surfaced ahead of architectural hubs.
+- Emits a `note` when the import graph is empty (e.g. single-file repos)
+  so callers know the rank ordering is uniform.
+
+### Why this exists
+
+The competitive analysis against [RepoMapper](https://github.com/pdavis68/RepoMapper)
+identified one honest feature gap: `get_ranked_context` requires a
+`query`, `get_tectonic_map` returns plate structure (not packed
+signatures), `digest` is delta-focused. None answer the cold-start
+question on a fresh clone. `get_repo_map` does, with full reuse of the
+existing PageRank machinery.
+
+### Tier registration
+
+- **Standard tier** (`tool_profile=standard`): included alongside
+  `get_symbol_importance`. Power-user trims via `disabled_tools`.
+- **Full tier** (default): listed under Quality & Metrics in `_CANONICAL_TOOL_NAMES`.
+
 ## [1.100.0] — 2026-05-10 — Phase 7: runtime-aware PR risk (milestone capstone)
 
 The reason this whole milestone existed. An agent reviewing a PR can now
