@@ -32,9 +32,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
+from typing import Iterable
+
 from .redact import redact_trace_record
 from .resolve import resolve_to_symbol_id
-from .stack_log import StackEvent, parse_stack_log_file
+from .stack_log import StackEvent, iter_stack_from_text, parse_stack_log_file
 
 logger = logging.getLogger(__name__)
 
@@ -78,7 +80,46 @@ def ingest_stack_log_file(
     db_path_obj = Path(db_path)
     if not db_path_obj.exists():
         raise FileNotFoundError(f"Index database not found: {db_path}")
+    return _ingest_stack_iter(
+        db_path=db_path_obj,
+        events=parse_stack_log_file(file_path),
+        redact_enabled=redact_enabled,
+        max_rows=max_rows,
+    )
 
+
+def ingest_stack_log_stream(
+    *,
+    db_path: str,
+    text: str,
+    fmt: str = "auto",
+    redact_enabled: bool = True,
+    max_rows: int = 100_000,
+) -> dict[str, Any]:
+    """Ingest an in-memory stack-log payload (Phase 6 HTTP route entrypoint).
+
+    Same contract as :func:`ingest_stack_log_file`. ``fmt`` selects the
+    parser dialect: ``'auto'`` (default), ``'plain'``, or ``'jsonl'``.
+    """
+    db_path_obj = Path(db_path)
+    if not db_path_obj.exists():
+        raise FileNotFoundError(f"Index database not found: {db_path}")
+    return _ingest_stack_iter(
+        db_path=db_path_obj,
+        events=iter_stack_from_text(text, fmt=fmt),
+        redact_enabled=redact_enabled,
+        max_rows=max_rows,
+    )
+
+
+def _ingest_stack_iter(
+    *,
+    db_path: Path,
+    events: Iterable[StackEvent],
+    redact_enabled: bool,
+    max_rows: int,
+) -> dict[str, Any]:
+    """Shared consumer: drive resolve→aggregate→persist for stack events."""
     aggregator = _BatchAggregator()
     unmapped_reasons: dict[str, int] = {}
     redactions_fired: dict[str, int] = {}
@@ -86,7 +127,7 @@ def ingest_stack_log_file(
     records = 0
     total_frames = 0
 
-    for event in parse_stack_log_file(file_path):
+    for event in events:
         records += 1
         severity = event.severity if event.severity in ("error", "warn", "info") else "info"
         severity_counts[severity] += 1
@@ -105,7 +146,7 @@ def ingest_stack_log_file(
                 unmapped_reasons["no_code_attrs"] = unmapped_reasons.get("no_code_attrs", 0) + 1
                 aggregator.unmapped_inc(frame)
                 continue
-            sid = _resolve_with_conn(db_path_obj, frame.file_path or "", frame.line_no, frame.function_name)
+            sid = _resolve_with_conn(db_path, frame.file_path or "", frame.line_no, frame.function_name)
             if sid is None:
                 unmapped_reasons["no_match"] = unmapped_reasons.get("no_match", 0) + 1
                 aggregator.unmapped_inc(frame)
@@ -114,7 +155,7 @@ def ingest_stack_log_file(
 
     now = _utc_now()
     evicted = _persist(
-        db_path_obj,
+        db_path,
         aggregator,
         redactions_fired,
         now=now,

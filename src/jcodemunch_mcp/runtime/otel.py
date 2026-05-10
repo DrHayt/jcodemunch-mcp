@@ -75,16 +75,34 @@ def parse_otel_file(path: str) -> Iterator[OtelSpan]:
         raise FileNotFoundError(f"OTel trace file not found: {path}")
     opener = gzip.open if p.suffix == ".gz" else open
     with opener(p, "rt", encoding="utf-8") as fh:  # type: ignore[operator]
-        # Decide between JSON-Lines and a single-document layout by
-        # inspecting the first non-whitespace byte. JSON-Lines starts
-        # each line with ``{``; a JSON array starts with ``[``.
-        first = fh.read(1)
-        while first and first.isspace():
-            first = fh.read(1)
-        if not first:
-            return
-        rest = fh.read()
-        text = first + rest
+        text = fh.read()
+    yield from iter_otel_from_text(text)
+
+
+def iter_otel_from_text(text: str) -> Iterator[OtelSpan]:
+    """Yield OtelSpan instances from an in-memory OTLP text payload.
+
+    The shared ``parse_otel_file`` and Phase 6 HTTP routes both delegate
+    here so the wire format and the file format are decoded by exactly
+    the same logic.
+
+    Args:
+        text: OTLP/JSON content. May be JSON-Lines, a single
+            top-level object, or a JSON array of resourceSpans records.
+
+    Raises:
+        ValueError: when the payload begins with a byte that's neither
+            ``[`` nor ``{``. Empty / whitespace-only input is yielded
+            silently as zero spans (caller treats that as a no-op).
+    """
+    # Find the first non-whitespace byte to decide the layout.
+    idx = 0
+    n = len(text)
+    while idx < n and text[idx].isspace():
+        idx += 1
+    if idx >= n:
+        return
+    first = text[idx]
 
     if first == "[":
         try:

@@ -120,6 +120,33 @@ def parse_sql_log_file(path: str) -> Iterator[SqlQueryRecord]:
         yield from _parse_json_lines(opener)
 
 
+def iter_sql_from_text(text: str, *, fmt: str = "auto") -> Iterator[SqlQueryRecord]:
+    """Yield SqlQueryRecord from an in-memory SQL log payload.
+
+    Used by the Phase 6 HTTP route. ``fmt`` selects the parser:
+      * ``'auto'`` (default) — heuristic: if the first non-whitespace
+        line contains ``,`` and looks header-shaped (no obvious SQL
+        keyword) treat it as CSV; otherwise JSON-Lines.
+      * ``'csv'`` — force pg_stat_statements parsing.
+      * ``'jsonl'`` — force JSON-Lines parsing.
+    """
+    if not text.strip():
+        return
+
+    if fmt == "auto":
+        head = text.lstrip()
+        # JSON-Lines / arrays start with `{` or `[`. Anything else is CSV.
+        fmt = "jsonl" if head[:1] in ("{", "[") else "csv"
+
+    def _opener_str() -> "io.StringIO":
+        return io.StringIO(text)
+
+    if fmt == "csv":
+        yield from _parse_pg_stat_statements_csv(_opener_str)
+    else:
+        yield from _parse_json_lines(_opener_str)
+
+
 # ---------------------------------------------------------------------------
 # CSV (pg_stat_statements)
 # ---------------------------------------------------------------------------

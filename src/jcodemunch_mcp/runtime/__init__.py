@@ -23,14 +23,14 @@ from .confidence import (
     attach_runtime_confidence,
     attach_runtime_confidence_by_file,
 )
-from .ingest import ingest_otel_file
-from .otel import OtelSpan, parse_otel_file
+from .ingest import ingest_otel_file, ingest_otel_stream
+from .otel import OtelSpan, iter_otel_from_text, parse_otel_file
 from .redact import redact_trace_record
 from .resolve import resolve_to_symbol_id
-from .sql_ingest import ingest_sql_log_file
-from .sql_log import SqlQueryRecord, parse_sql_log_file
-from .stack_ingest import ingest_stack_log_file
-from .stack_log import StackEvent, StackFrame, parse_stack_log_file
+from .sql_ingest import ingest_sql_log_file, ingest_sql_log_stream
+from .sql_log import SqlQueryRecord, iter_sql_from_text, parse_sql_log_file
+from .stack_ingest import ingest_stack_log_file, ingest_stack_log_stream
+from .stack_log import StackEvent, StackFrame, iter_stack_from_text, parse_stack_log_file
 
 VALID_SOURCES = frozenset({"otel", "sql_log", "stack_log", "apm"})
 
@@ -38,13 +38,19 @@ __all__ = [
     "redact_trace_record",
     "resolve_to_symbol_id",
     "parse_otel_file",
+    "iter_otel_from_text",
     "ingest_otel_file",
+    "ingest_otel_stream",
     "OtelSpan",
     "parse_sql_log_file",
+    "iter_sql_from_text",
     "ingest_sql_log_file",
+    "ingest_sql_log_stream",
     "SqlQueryRecord",
     "parse_stack_log_file",
+    "iter_stack_from_text",
     "ingest_stack_log_file",
+    "ingest_stack_log_stream",
     "StackEvent",
     "StackFrame",
     "RuntimeConfidenceProbe",

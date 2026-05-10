@@ -2,6 +2,127 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.99.0] — 2026-05-10 — Phase 6: HTTP live-ingest endpoint
+
+Adds an opt-in HTTP transport endpoint so production systems can ship
+runtime signals to a running jcm instance in real time instead of via
+nightly file imports. Built on top of the existing Starlette HTTP MCP
+transport — same bearer auth, same rate limit, same redaction
+chokepoint, same upserts, same FIFO eviction. The HTTP and file paths
+are bit-for-bit interchangeable.
+
+### Three new POST routes
+
+- ``POST /runtime/otel``  — OTLP/JSON spans (Phase 1 wire format)
+- ``POST /runtime/sql``   — pg_stat_statements CSV / JSON-Lines (Phase 4)
+- ``POST /runtime/stack`` — Python / JVM / Node.js stacks (Phase 5)
+
+Each route accepts the same body format the file-based ``import-trace``
+CLI accepts. ``Content-Encoding: gzip`` is honoured under the body-size
+cap. Repo identifier comes from the ``X-JCM-Repo`` header or
+``?repo=owner/name`` query string. Each handler is thin: parse → hand to
+the corresponding ``ingest_*_stream`` orchestrator → return the same
+envelope the file ingestors return.
+
+### Two-key turn (off by default)
+
+The endpoint is **off by default**. Two flags must turn before traffic
+flows:
+
+1. ``JCODEMUNCH_HTTP_TOKEN`` — bearer auth (already required by the
+   existing HTTP transport when bound to a non-loopback host).
+2. ``JCODEMUNCH_RUNTIME_INGEST_ENABLED=1`` — explicit opt-in to the
+   write side. Without this the routes return 503 even with a valid
+   token.
+
+Reasoning: a write endpoint is a bigger deal than a read endpoint;
+operators should make the decision twice.
+
+### Concurrency + safety
+
+- **Per-repo asyncio.Lock** serialises writes against the same SQLite
+  database file. Cheaper than letting WAL retry-storm under load and
+  keeps upsert order deterministic. Lock registry is LRU-bounded at 256
+  repos.
+- **Per-request body cap** (default 5 MB after decompression; tunable
+  via ``JCODEMUNCH_RUNTIME_INGEST_MAX_BODY_BYTES``) prevents DoS via
+  giant or gzip-bomb payloads. Decompressed size is checked separately
+  from on-wire size.
+- **Same redaction chokepoint** the file ingestors use — every record
+  routes through ``redact_trace_record()`` before any storage call.
+
+### Stream orchestrators (the underlying refactor)
+
+- ``ingest_otel_stream(db_path, text, ...)``
+- ``ingest_sql_log_stream(db_path, text, fmt='auto', ...)``
+- ``ingest_stack_log_stream(db_path, text, fmt='auto', ...)``
+
+The file-based ``ingest_*_file`` functions are now thin wrappers around
+shared ``_ingest_*_iter`` consumers; both file and stream paths share
+the resolve→aggregate→persist pipeline. Equivalence test in the suite
+asserts identical envelopes when fed identical content.
+
+### New parser helpers
+
+- ``iter_otel_from_text(text)`` — already used internally by
+  ``parse_otel_file``; now public.
+- ``iter_sql_from_text(text, fmt='auto'|'csv'|'jsonl')``
+- ``iter_stack_from_text(text, fmt='auto'|'plain'|'jsonl')``
+
+These let callers (HTTP routes, but also test harnesses) parse a
+payload without writing it to disk first.
+
+### New MCP tool: ``get_redaction_log``
+
+Forensic accounting for operators: surfaces the per-pattern counts
+recorded in ``runtime_redaction_log`` so you can verify the redaction
+chokepoint is actually firing on production traffic. Filters by
+``source`` (otel / sql_log / stack_log / apm) and ``since_days`` (default
+30). Read-only / immutable connection so the LRU cache isn't evicted by
+an mtime bump. Empty patterns list = either no traffic in the window
+or ``JCODEMUNCH_RUNTIME_REDACT`` was disabled.
+
+### Reference: OTel Collector exporter snippet
+
+``examples/otel-collector/jcm-exporter.yaml`` — copy-paste
+``otlphttp/jcm-otel`` / ``otlphttp/jcm-sql`` / ``otlphttp/jcm-stack``
+exporter blocks for the OpenTelemetry Collector with bearer auth,
+``X-JCM-Repo`` header, gzip compression, and retry policy. Adjacent
+README documents the two-key turn and the verification flow
+(``get_redaction_log`` → ``get_runtime_coverage``).
+
+### Tests
+
+17 new tests in ``tests/test_runtime_phase6.py`` covering:
+
+- Stream-parser ↔ file-parser equivalence (OTel + SQL + stack).
+- ``ingest_otel_stream`` envelope identical to ``ingest_otel_file``.
+- HTTP route gating: 503 when disabled, 400 without repo, 404 when not
+  indexed, 413 on oversized body, 400 on unknown ``?fmt=``.
+- Happy path for all three routes (header-based + query-based repo
+  selection + gzip Content-Encoding).
+- ``get_redaction_log`` surfaces live-ingest redaction labels +
+  filters by source.
+
+Suite at 4150 passed, 7 skipped.
+
+### Total v1.99.0 footprint
+
+- 3 new HTTP routes mounted on both SSE and streamable-http transports
+  (both under the same bearer auth + rate-limit middleware).
+- 1 new module: ``runtime/http_routes.py`` (Starlette handlers + per-repo
+  lock registry).
+- 3 new ``ingest_*_stream`` public functions; existing file-based
+  functions refactored to share the same downstream pipeline.
+- 1 new MCP tool: ``get_redaction_log`` (74 → 75 with test_summarizer
+  enabled, 73 → 74 with default config).
+- 2 new env vars: ``JCODEMUNCH_RUNTIME_INGEST_ENABLED``,
+  ``JCODEMUNCH_RUNTIME_INGEST_MAX_BODY_BYTES``.
+- ``examples/otel-collector/`` dir with reference exporter + README.
+
+Phase 7 (``get_pr_risk_profile`` runtime weighting — milestone capstone
+with the seventh radar axis) is the only roadmap item left.
+
 ## [1.98.0] — 2026-05-10 — Phases 4 + 5: SQL log + stack-frame ingest
 
 Two new runtime signal sources: pg_stat_statements / generic SQL JSON-Lines

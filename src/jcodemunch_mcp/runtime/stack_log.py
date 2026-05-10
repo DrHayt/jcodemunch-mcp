@@ -126,6 +126,29 @@ def parse_stack_log_file(path: str) -> Iterator[StackEvent]:
         yield from _parse_plain_text(opener)
 
 
+def iter_stack_from_text(text: str, *, fmt: str = "auto") -> Iterator[StackEvent]:
+    """Yield StackEvent from an in-memory stack-log payload.
+
+    ``fmt`` selects the parser:
+      * ``'auto'`` (default) — heuristic: if the first non-whitespace
+        char is ``{`` or ``[`` treat as JSON-Lines / array; otherwise
+        plain-text.
+      * ``'plain'`` — force the line-by-line traceback scanner.
+      * ``'jsonl'`` — force the JSON-Lines path.
+    """
+    if not text.strip():
+        return
+
+    if fmt == "auto":
+        head = text.lstrip()
+        fmt = "jsonl" if head[:1] in ("{", "[") else "plain"
+
+    if fmt == "jsonl":
+        yield from _parse_json_lines(lambda: io.StringIO(text))
+    else:
+        yield from iter_events_from_text(text)
+
+
 # ---------------------------------------------------------------------------
 # JSON-Lines structured log
 # ---------------------------------------------------------------------------

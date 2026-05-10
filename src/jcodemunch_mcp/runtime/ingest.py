@@ -27,7 +27,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
-from .otel import OtelSpan, parse_otel_file
+from typing import Iterable
+
+from .otel import OtelSpan, iter_otel_from_text, parse_otel_file
 from .redact import redact_trace_record
 from .resolve import resolve_to_symbol_id
 
@@ -72,31 +74,71 @@ def ingest_otel_file(
     db_path_obj = Path(db_path)
     if not db_path_obj.exists():
         raise FileNotFoundError(f"Index database not found: {db_path}")
+    return _ingest_otel_iter(
+        db_path=db_path_obj,
+        spans=parse_otel_file(file_path),
+        redact_enabled=redact_enabled,
+        max_rows=max_rows,
+    )
 
+
+def ingest_otel_stream(
+    *,
+    db_path: str,
+    text: str,
+    redact_enabled: bool = True,
+    max_rows: int = 100_000,
+) -> dict[str, Any]:
+    """Ingest an in-memory OTLP/JSON payload (Phase 6 HTTP route entrypoint).
+
+    Same contract as :func:`ingest_otel_file`; the file vs stream split is
+    purely the source of the iterator. PII redaction, resolution, and
+    runtime_* upserts are identical.
+    """
+    db_path_obj = Path(db_path)
+    if not db_path_obj.exists():
+        raise FileNotFoundError(f"Index database not found: {db_path}")
+    return _ingest_otel_iter(
+        db_path=db_path_obj,
+        spans=iter_otel_from_text(text),
+        redact_enabled=redact_enabled,
+        max_rows=max_rows,
+    )
+
+
+def _ingest_otel_iter(
+    *,
+    db_path: Path,
+    spans: Iterable[OtelSpan],
+    redact_enabled: bool,
+    max_rows: int,
+) -> dict[str, Any]:
+    """Shared consumer: drive the resolve→aggregate→persist pipeline.
+
+    Used by both the file-based ``ingest_otel_file`` and the HTTP-based
+    ``ingest_otel_stream``. Behaviour is identical so the wire format and
+    the file format remain bit-for-bit interchangeable.
+    """
     aggregator = _BatchAggregator()
     unmapped_reasons: dict[str, int] = {}
     redactions_fired: dict[str, int] = {}
     records = 0
 
-    for span in parse_otel_file(file_path):
+    for span in spans:
         records += 1
-        # Redact extras (the only span-level non-structural payload)
         if redact_enabled and span.extra:
             redacted_extra, fired_labels = redact_trace_record(
                 {"extra": span.extra}, source="otel"
             )
             for label in fired_labels:
                 redactions_fired[label] = redactions_fired.get(label, 0) + 1
-            # We don't store the extras; redaction's purpose here is the
-            # forensic accounting — proves PII never reached the DB.
             del redacted_extra
-        # Eligibility for resolution
         if not span.file_path and not span.function_name:
             unmapped_reasons["no_code_attrs"] = unmapped_reasons.get("no_code_attrs", 0) + 1
             aggregator.unmapped_inc(span)
             continue
         symbol_id = _resolve_with_conn(
-            db_path_obj,
+            db_path,
             span.file_path or "",
             span.line_no,
             span.function_name,
@@ -109,7 +151,7 @@ def ingest_otel_file(
 
     now = _utc_now()
     evicted = _persist(
-        db_path_obj,
+        db_path,
         aggregator,
         redactions_fired,
         now=now,

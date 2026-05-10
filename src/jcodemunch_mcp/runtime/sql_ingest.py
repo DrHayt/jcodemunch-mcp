@@ -35,8 +35,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Optional
 
+from typing import Iterable
+
 from .redact import redact_trace_record
-from .sql_log import SqlQueryRecord, parse_sql_log_file
+from .sql_log import SqlQueryRecord, iter_sql_from_text, parse_sql_log_file
 
 logger = logging.getLogger(__name__)
 
@@ -82,7 +84,50 @@ def ingest_sql_log_file(
     db_path_obj = Path(db_path)
     if not db_path_obj.exists():
         raise FileNotFoundError(f"Index database not found: {db_path}")
+    return _ingest_sql_iter(
+        db_path=db_path_obj,
+        queries=parse_sql_log_file(file_path),
+        redact_enabled=redact_enabled,
+        max_rows=max_rows,
+    )
 
+
+def ingest_sql_log_stream(
+    *,
+    db_path: str,
+    text: str,
+    fmt: str = "auto",
+    redact_enabled: bool = True,
+    max_rows: int = 100_000,
+) -> dict[str, Any]:
+    """Ingest an in-memory SQL log payload (Phase 6 HTTP route entrypoint).
+
+    Same contract as :func:`ingest_sql_log_file`. ``fmt`` selects the
+    parser dialect: ``'auto'`` (default), ``'csv'`` (pg_stat_statements),
+    or ``'jsonl'`` (generic SQL JSON-Lines).
+    """
+    db_path_obj = Path(db_path)
+    if not db_path_obj.exists():
+        raise FileNotFoundError(f"Index database not found: {db_path}")
+    return _ingest_sql_iter(
+        db_path=db_path_obj,
+        queries=iter_sql_from_text(text, fmt=fmt),
+        redact_enabled=redact_enabled,
+        max_rows=max_rows,
+    )
+
+
+def _ingest_sql_iter(
+    *,
+    db_path: Path,
+    queries: Iterable[SqlQueryRecord],
+    redact_enabled: bool,
+    max_rows: int,
+) -> dict[str, Any]:
+    """Shared consumer: drive resolve→aggregate→persist for SQL queries.
+
+    Used by both ``ingest_sql_log_file`` and ``ingest_sql_log_stream``.
+    """
     aggregator = _BatchAggregator()
     unmapped_reasons: dict[str, int] = {}
     redactions_fired: dict[str, int] = {}
@@ -91,9 +136,9 @@ def ingest_sql_log_file(
     # Read-only metadata snapshot (model_files map + dbt_columns) used by the
     # resolver. One snapshot per ingest is fine — the index is never edited
     # while an ingest runs (single-writer).
-    metadata = _load_resolver_metadata(db_path_obj)
+    metadata = _load_resolver_metadata(db_path)
 
-    for query in parse_sql_log_file(file_path):
+    for query in queries:
         records += 1
         sql_text = query.sql
         if redact_enabled:
@@ -166,7 +211,7 @@ def ingest_sql_log_file(
 
     now = _utc_now()
     evicted = _persist(
-        db_path_obj,
+        db_path,
         aggregator,
         redactions_fired,
         now=now,

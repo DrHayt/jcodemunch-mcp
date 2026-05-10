@@ -84,11 +84,12 @@ _CANONICAL_TOOL_NAMES: tuple[str, ...] = (
     "set_tool_tier", "announce_model",
     # Composite retrieval
     "winnow_symbols",
-    # Runtime trace ingest + analytics (Phase 1-3)
+    # Runtime trace ingest + analytics (Phases 1-6)
     "import_runtime_signal",
     "get_runtime_coverage",
     "find_hot_paths",
     "find_unused_paths",
+    "get_redaction_log",
     # Self-guide (force-included; lets one-line CLAUDE.md pull full policy on demand)
     "jcodemunch_guide",
 )
@@ -114,6 +115,7 @@ _TOOL_TIER_STANDARD: frozenset[str] = _TOOL_TIER_CORE | frozenset({
     # Indexing extras
     "summarize_repo", "embed_repo",
     "import_runtime_signal", "get_runtime_coverage", "find_hot_paths", "find_unused_paths",
+    "get_redaction_log",
     # Discovery extras
     "suggest_queries", "search_columns",
     # Relationships
@@ -927,6 +929,35 @@ def _build_tools_list() -> list[Tool]:
                         "type": "integer",
                         "description": "Cap on returned rows (default 200, max 1000)",
                         "default": 200,
+                    },
+                },
+                "required": ["repo"],
+            },
+        ),
+        Tool(
+            name="get_redaction_log",
+            description=(
+                "Per-pattern PII redaction counts from runtime_redaction_log. "
+                "Operators run this to verify the redaction chokepoint is firing on "
+                "production traffic — covers the OTel / SQL / stack ingest paths "
+                "(file-based or HTTP live-ingest, Phase 6). Returns "
+                "{patterns: [{source, pattern, count, last_redacted}], "
+                "total_redactions, sources}. Empty patterns list = either no traffic "
+                "yet, or JCODEMUNCH_RUNTIME_REDACT was disabled."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "repo": {"type": "string", "description": "Repository identifier (owner/name)"},
+                    "source": {
+                        "type": "string",
+                        "enum": ["otel", "sql_log", "stack_log", "apm"],
+                        "description": "Optional filter to a single source label",
+                    },
+                    "since_days": {
+                        "type": "integer",
+                        "description": "Lookback window for last_redacted filter (default 30)",
+                        "default": 30,
                     },
                 },
                 "required": ["repo"],
@@ -3380,6 +3411,17 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                     storage_path=storage_path,
                 )
             )
+        elif name == "get_redaction_log":
+            from .tools.get_redaction_log import get_redaction_log
+            result = await asyncio.to_thread(
+                functools.partial(
+                    get_redaction_log,
+                    repo=arguments["repo"],
+                    source=arguments.get("source"),
+                    since_days=arguments.get("since_days", 30),
+                    storage_path=storage_path,
+                )
+            )
         elif name == "list_repos":
             from .tools.list_repos import list_repos
             result = await asyncio.to_thread(
@@ -4675,10 +4717,16 @@ async def run_sse_server(host: str, port: int):
     if rate_mw:
         middleware.append(rate_mw)
 
+    # Phase 6: optional /runtime/* live-ingest routes (off by default; gated
+    # by runtime_ingest_enabled config + JCODEMUNCH_HTTP_TOKEN auth).
+    from .runtime.http_routes import make_runtime_routes
+    runtime_routes = make_runtime_routes()
+
     starlette_app = Starlette(
         routes=[
             Route("/sse", endpoint=handle_sse),
             Mount("/messages/", app=sse_transport.handle_post_message),
+            *runtime_routes,
         ],
         middleware=middleware,
     )
@@ -4853,9 +4901,14 @@ async def run_streamable_http_server(host: str, port: int):
     if rate_mw:
         middleware.append(rate_mw)
 
+    # Phase 6: optional /runtime/* live-ingest routes (off by default).
+    from .runtime.http_routes import make_runtime_routes
+    runtime_routes = make_runtime_routes()
+
     starlette_app = Starlette(
         routes=[
             Route("/mcp", endpoint=handle_mcp, methods=["GET", "POST", "DELETE"]),
+            *runtime_routes,
         ],
         middleware=middleware,
     )
@@ -4977,7 +5030,7 @@ def _generate_claude_md_snippet(missing_only: bool = False) -> str:
                         "audit_agent_config", "get_watch_status"]),
         ("Runtime Trace Ingest & Analytics", [
             "import_runtime_signal", "get_runtime_coverage",
-            "find_hot_paths", "find_unused_paths",
+            "find_hot_paths", "find_unused_paths", "get_redaction_log",
         ]),
         ("Runtime Tier Switching", ["set_tool_tier", "announce_model"]),
         ("Self-Guide", ["jcodemunch_guide"]),
