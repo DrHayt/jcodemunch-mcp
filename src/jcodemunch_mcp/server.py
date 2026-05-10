@@ -68,7 +68,7 @@ _CANONICAL_TOOL_NAMES: tuple[str, ...] = (
     # Quality & Metrics
     "get_symbol_complexity", "get_churn_rate", "get_hotspots",
     "get_repo_health", "get_symbol_importance", "get_repo_map", "find_dead_code",
-    "get_dead_code_v2", "get_untested_symbols", "search_ast",
+    "get_dead_code_v2", "get_untested_symbols", "find_similar_symbols", "search_ast",
     # Diffs & Embeddings
     "get_symbol_diff", "embed_repo",
     # Utilities
@@ -128,7 +128,8 @@ _TOOL_TIER_STANDARD: frozenset[str] = _TOOL_TIER_CORE | frozenset({
     # Quality & Metrics
     "get_symbol_complexity", "get_churn_rate", "get_hotspots",
     "get_symbol_importance", "get_repo_map", "find_dead_code", "get_dead_code_v2",
-    "get_untested_symbols", "get_repo_health", "search_ast", "winnow_symbols",
+    "get_untested_symbols", "find_similar_symbols",
+    "get_repo_health", "search_ast", "winnow_symbols",
     # Architecture
     "get_dependency_cycles", "get_coupling_metrics", "get_layer_violations",
     "get_cross_repo_map", "get_tectonic_map", "get_signal_chains",
@@ -2489,6 +2490,65 @@ def _build_tools_list() -> list[Tool]:
             },
         ),
         Tool(
+            name="find_similar_symbols",
+            description=(
+                "Find clusters of similar functions/methods/classes — consolidation candidates. "
+                "Blends three signals: semantic (embedding cosine when embed_repo has run), "
+                "structural (signature-token Jaccard + size ratio), and behavioral (callee-set Jaccard). "
+                "Runs union-find clustering, classifies each cluster (near_duplicate / similar_logic / "
+                "parallel_implementation), picks a canonical symbol per cluster (highest PageRank), "
+                "and surfaces 'differs_by' breakdowns so an agent can recommend keep-this/replace-those. "
+                "Pre-filters via BM25 inverted index — sub-N^2 on large repos. Degrades gracefully "
+                "without embeddings (mode='structural'). Skip tests/dunders/generated files by default."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "repo": {"type": "string", "description": "Repository identifier (owner/repo or just repo name)"},
+                    "threshold": {
+                        "type": "number",
+                        "description": "Minimum combined similarity to form a cluster edge (0.0–1.0). Default 0.80.",
+                        "default": 0.80,
+                    },
+                    "min_size": {
+                        "type": "integer",
+                        "description": "Minimum byte_length per symbol (default 30; filters out getters/wrappers).",
+                        "default": 30,
+                    },
+                    "max_clusters": {
+                        "type": "integer",
+                        "description": "Cap on clusters returned (default 25).",
+                        "default": 25,
+                    },
+                    "include_tests": {
+                        "type": "boolean",
+                        "description": "When False (default), test files are skipped — tests intentionally share shapes.",
+                        "default": False,
+                    },
+                    "scope": {
+                        "type": "string",
+                        "description": "Optional glob to limit to a subdirectory (e.g. 'src/core/*').",
+                    },
+                    "include_kinds": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Symbol kind whitelist. Defaults to ['function', 'method', 'class'].",
+                    },
+                    "semantic_weight": {
+                        "type": "number",
+                        "description": "Embedding weight when embeddings are present (0.0–1.0). Default 0.6.",
+                        "default": 0.6,
+                    },
+                    "token_budget": {
+                        "type": "integer",
+                        "description": "Hard cap on the response's payload (default 4000).",
+                        "default": 4000,
+                    },
+                },
+                "required": ["repo"],
+            },
+        ),
+        Tool(
             name="get_repo_map",
             description=(
                 "Query-less, token-budgeted, signature-level overview of a repository. "
@@ -4083,6 +4143,23 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                     storage_path=storage_path,
                 )
             )
+        elif name == "find_similar_symbols":
+            from .tools.find_similar_symbols import find_similar_symbols
+            result = await asyncio.to_thread(
+                functools.partial(
+                    find_similar_symbols,
+                    repo=arguments["repo"],
+                    threshold=arguments.get("threshold", 0.80),
+                    min_size=arguments.get("min_size", 30),
+                    max_clusters=arguments.get("max_clusters", 25),
+                    include_tests=arguments.get("include_tests", False),
+                    scope=arguments.get("scope"),
+                    include_kinds=arguments.get("include_kinds"),
+                    semantic_weight=arguments.get("semantic_weight", 0.6),
+                    token_budget=arguments.get("token_budget", 4000),
+                    storage_path=storage_path,
+                )
+            )
         elif name == "find_dead_code":
             from .tools.find_dead_code import find_dead_code
             result = await asyncio.to_thread(
@@ -5070,7 +5147,7 @@ def _generate_claude_md_snippet(missing_only: bool = False) -> str:
         ("Quality & Metrics", ["get_symbol_complexity", "get_churn_rate", "get_hotspots",
                                 "get_repo_health", "diff_health_radar",
                                 "get_file_risk", "get_symbol_importance",
-                                "get_repo_map",
+                                "get_repo_map", "find_similar_symbols",
                                 "find_dead_code", "get_dead_code_v2",
                                 "get_untested_symbols", "search_ast",
                                 "winnow_symbols"]),

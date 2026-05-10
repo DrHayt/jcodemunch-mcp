@@ -2,6 +2,88 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.102.0] — 2026-05-10 — `find_similar_symbols`: F-15 consolidation detection
+
+Closes the one Pharaoh Pro-tier feature with no free equivalent in our suite:
+"Consolidation Opportunities" — finding clusters of similar functions for
+refactor consolidation. Done deliberately as an F-15 rather than a bicycle —
+multi-signal scoring, union-find clustering, verdict tiers, canonical pick,
+and a "differs_by" breakdown so the result is actionable, not just suggestive.
+
+### `find_similar_symbols` (new tool, Quality & Metrics tier)
+
+Three-signal similarity blending:
+
+1. **Semantic** — embedding cosine similarity (when `embed_repo` has run)
+2. **Structural** — Jaccard over signature-token bag + symmetric byte-length ratio
+3. **Behavioral** — Jaccard over the set of callee names (from `call_references`)
+
+Graceful degradation: when embeddings are absent, falls back to a 50/50 blend of
+structural + behavioral and labels the response `mode: "structural"` so callers
+know confidence is lower. Verdict tier auto-adjusts to `parallel_implementation`
+in structural mode.
+
+### Cluster output, not pair output
+
+Edges above `threshold` feed union-find; output is groups, not N-choose-2 noise.
+Each cluster gets:
+
+- **Verdict tier**: `near_duplicate` (avg ≥ 0.92), `similar_logic` (0.80–0.92),
+  or `parallel_implementation` (structural-only mode).
+- **Canonical pick**: highest-PageRank symbol becomes the suggested keep-this;
+  reasoning surfaced as `score_reason: "highest_pagerank"` or `"largest_body"`.
+- **differs_by**: one-line per-cluster breakdown of the divergence axis —
+  `["body: ±18 bytes", "params: 2 (match)", "callees: 3 shared, 1 unique each"]`.
+- **Impact ranking**: clusters sorted by `size × max_byte_length`, packed under
+  `token_budget` so the largest consolidation wins surface first.
+
+### Performance: BM25 pre-filter, sub-N^2
+
+Scoring all N-choose-2 pairs is unworkable on 8k-symbol repos. We pre-filter to
+only score pairs that share at least one BM25 inverted-index posting, with a
+per-term posting cap and a hard pair cap (100k) as safety nets. On the
+jcodemunch-mcp index (7,700+ symbols), the tool returns in ~1–2s.
+
+### Default-on false-positive filters
+
+- `min_size=30` bytes — kills `def get_x(): return self._x` swarms
+- Test files excluded unless `include_tests=True` (tests intentionally share shapes)
+- Dunders excluded (`__init__`, `__repr__`, etc. — forced by language)
+- Generated-code filenames skipped (`_pb2.py`, `.gen.go`, `.generated.ts`, ...)
+
+### Why F-15 vs. bicycle
+
+Pharaoh's Pro-tier feature does the single-signal cosine version on a hosted
+Neo4j graph for $27/mo. Our version is free, runs offline, blends three signals,
+clusters rather than pairs, and surfaces the canonical pick + difference signal
+so the agent can make a refactor recommendation rather than just a list.
+[Detail in versus.php vs-pharaoh section.](https://j.gravelle.us/jCodeMunch/versus.php#vs-pharaoh)
+
+### Parameters
+
+```python
+find_similar_symbols(
+    repo: str,
+    threshold: float = 0.80,
+    min_size: int = 30,
+    max_clusters: int = 25,
+    include_tests: bool = False,
+    scope: Optional[str] = None,
+    include_kinds: Optional[list] = None,    # default: function/method/class
+    semantic_weight: float = 0.6,
+    token_budget: int = 4000,
+)
+```
+
+### Tier registration
+
+- **Standard tier**: included alongside `find_dead_code`, `get_untested_symbols`.
+- **Full tier** (default): listed under Quality & Metrics.
+
+### Tests
+
+14 new tests; full suite at 4188 passed, 7 skipped.
+
 ## [1.101.0] — 2026-05-10 — `get_repo_map`: cold-start orientation map
 
 Closes the one feature gap RepoMapper still occupied: the query-less,
