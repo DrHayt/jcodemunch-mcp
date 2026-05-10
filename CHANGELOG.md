@@ -2,6 +2,63 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.94.0] — 2026-05-09 — Symbol-aware selective re-export tracking
+
+Closes [#286](https://github.com/jgravelle/jcodemunch-mcp/issues/286).
+v1.93.0 made the import graph barrel-aware for **wildcard** re-exports
+(`export * from <spec>`). The remaining ~5% — **selective**
+re-exports (`export { Foo } from <spec>`, `export { Foo as Bar } from`,
+`export { default as Qux } from`) — were captured as flag-less import
+edges, so leaves re-exported through them under-attributed Ca: the
+importer's `import { Foo } from './barrel'` resolved to the barrel
+and stopped there.
+
+**Re-index required** — `INDEX_VERSION` bumped from 10 → 11. Old
+indexes degrade gracefully to v1.93 wildcard semantics (correct for
+`export *`, over-credits on `export { X } from`).
+
+### Edge shape
+
+Re-export edges now carry `re_export_kind`:
+
+```python
+# Wildcard
+{"specifier": "./leaf", "names": [], "is_re_export": True,
+ "re_export_kind": "wildcard"}
+
+# Selective
+{"specifier": "./foo", "names": ["Foo"], "is_re_export": True,
+ "re_export_kind": "selective",
+ "re_export_origins": [{"exposed": "Foo", "original": "Foo"}]}
+```
+
+### Resolution
+
+When walking imports of barrel B by consumer C:
+
+* For each name `N` in `import { N } from B`:
+  * If `re_exports_named[B][N]` exists → credit that leaf (chase
+    chains via the `original` name through nested barrels).
+  * Else if B has wildcard re-exports → fall back to wildcard
+    expansion (mixed-barrel pattern: `export { X } from './x';
+    export * from './y'`).
+* For `import * as ns from B` (no name context) → over-credit:
+  expand both wildcard leaves AND every named leaf. Safer fallback
+  when the consumer's per-name use is opaque to the parser.
+
+### Acceptance criteria from #286
+
+- [x] `find_importers` against a leaf re-exported via `export { X }
+      from` returns importers that consume `X` through the barrel,
+      and excludes importers that consume only other names from the
+      same barrel.
+- [x] Tests cover: simple selective, rename, default re-export,
+      mixed wildcard+selective, namespace import fallback, chained
+      selective with rename, wildcard regression.
+
+Out of scope (deferred to v1.95+): TypeScript `export type { Foo }
+from <spec>` type-only re-exports; per-call-site Ca attribution.
+
 ## [1.93.1] — 2026-05-09 — Graceful watcher fallback when `watchfiles` extra is missing
 
 Closes [#281](https://github.com/jgravelle/jcodemunch-mcp/issues/281). When

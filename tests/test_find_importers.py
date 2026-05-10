@@ -1393,16 +1393,35 @@ class TestExportStarCapture:
         assert "./utils" in specs
         assert specs["./utils"].get("is_re_export") is True
 
-    def test_selective_export_not_flagged_as_re_export(self):
-        # `export { X } from` is selective — not a barrel; treated as
-        # a regular import edge, not a re-export.
+    def test_selective_export_flagged_as_selective_re_export(self):
+        # v1.94.0: `export { X } from` is now flagged with
+        # re_export_kind="selective" so the graph builder can do per-name
+        # routing.  Wildcards keep re_export_kind="wildcard".
         result = extract_imports(
             "export { Foo } from './foo';",
             "src/index.ts", "typescript",
         )
         specs = {r["specifier"]: r for r in result}
         assert "./foo" in specs
-        assert specs["./foo"].get("is_re_export") is not True
+        edge = specs["./foo"]
+        assert edge.get("is_re_export") is True
+        assert edge.get("re_export_kind") == "selective"
+        assert edge.get("re_export_origins") == [
+            {"exposed": "Foo", "original": "Foo"},
+        ]
+        assert "Foo" in edge.get("names", [])
+
+    def test_wildcard_export_flagged_with_kind(self):
+        # v1.94.0: wildcard re-exports gain an explicit kind tag too.
+        result = extract_imports(
+            "export * from './leaf';",
+            "src/index.ts", "typescript",
+        )
+        specs = {r["specifier"]: r for r in result}
+        edge = specs["./leaf"]
+        assert edge.get("is_re_export") is True
+        assert edge.get("re_export_kind") == "wildcard"
+        assert "re_export_origins" not in edge
 
 
 class TestDottedSpecifierResolution:
@@ -1482,3 +1501,179 @@ class TestBarrelAwareFindImporters:
         importers = [i["file"] for i in result.get("importers", [])]
         assert "consumer.ts" in importers
         assert "lib/index.ts" not in importers
+
+
+class TestSelectiveReExportFindImporters:
+    """v1.94.0: symbol-aware selective re-export tracking.
+
+    For `export { Foo } from './foo'` in a barrel, only consumers that
+    actually import `Foo` from the barrel credit `./foo` — importers
+    consuming a different name from the same barrel should NOT credit it.
+    """
+
+    def _index(self, tmp_path: Path, files: dict[str, str]):
+        src = tmp_path / "src"
+        src.mkdir()
+        for rel, content in files.items():
+            f = src / rel
+            f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(content)
+        store = tmp_path / "store"
+        r = index_folder(str(src), use_ai_summaries=False, storage_path=str(store))
+        assert r["success"] is True
+        return r["repo"], str(store)
+
+    def test_simple_selective_credits_only_consumers_of_that_name(self, tmp_path):
+        # barrel re-exports Foo from foo.ts and Bar from bar.ts.
+        # consumer-foo imports only Foo; consumer-bar imports only Bar.
+        # Each should credit only its own leaf.
+        repo, store = self._index(tmp_path, {
+            "consumer-foo.ts": "import { Foo } from './lib';\n",
+            "consumer-bar.ts": "import { Bar } from './lib';\n",
+            "lib/index.ts": (
+                "export { Foo } from './foo';\n"
+                "export { Bar } from './bar';\n"
+            ),
+            "lib/foo.ts": "export const Foo = 1;\n",
+            "lib/bar.ts": "export const Bar = 2;\n",
+        })
+
+        foo_importers = [
+            i["file"] for i in find_importers(
+                repo=repo, file_path="lib/foo.ts", storage_path=store,
+            ).get("importers", [])
+        ]
+        bar_importers = [
+            i["file"] for i in find_importers(
+                repo=repo, file_path="lib/bar.ts", storage_path=store,
+            ).get("importers", [])
+        ]
+        assert "consumer-foo.ts" in foo_importers
+        assert "consumer-bar.ts" not in foo_importers, (
+            f"foo.ts over-credited; importers were {foo_importers}"
+        )
+        assert "consumer-bar.ts" in bar_importers
+        assert "consumer-foo.ts" not in bar_importers, (
+            f"bar.ts over-credited; importers were {bar_importers}"
+        )
+
+    def test_rename_re_export(self, tmp_path):
+        # `export { Foo as PublicFoo } from './foo'`
+        # Consumer imports PublicFoo; the leaf `./foo` defines Foo.
+        repo, store = self._index(tmp_path, {
+            "consumer.ts":     "import { PublicFoo } from './lib';\n",
+            "lib/index.ts":    "export { Foo as PublicFoo } from './foo';\n",
+            "lib/foo.ts":      "export const Foo = 1;\n",
+        })
+        importers = [
+            i["file"] for i in find_importers(
+                repo=repo, file_path="lib/foo.ts", storage_path=store,
+            ).get("importers", [])
+        ]
+        assert "consumer.ts" in importers, (
+            f"rename re-export not expanded; importers were {importers}"
+        )
+
+    def test_default_re_export(self, tmp_path):
+        # `export { default as Qux } from './leaf'` — default re-export.
+        repo, store = self._index(tmp_path, {
+            "consumer.ts":     "import { Qux } from './lib';\n",
+            "lib/index.ts":    "export { default as Qux } from './leaf';\n",
+            "lib/leaf.ts":     "export default class Leaf {}\n",
+        })
+        importers = [
+            i["file"] for i in find_importers(
+                repo=repo, file_path="lib/leaf.ts", storage_path=store,
+            ).get("importers", [])
+        ]
+        assert "consumer.ts" in importers, (
+            f"default re-export not expanded; importers were {importers}"
+        )
+
+    def test_mixed_wildcard_and_selective(self, tmp_path):
+        # Mixed barrel: selective `export { Foo }` + wildcard `export * from './bar'`.
+        # Consumer imports Baz (which lives in ./bar) — should fall through
+        # to the wildcard expansion and credit ./bar.
+        # Consumer importing Foo should still credit ./foo only.
+        repo, store = self._index(tmp_path, {
+            "consumer-foo.ts": "import { Foo } from './lib';\n",
+            "consumer-baz.ts": "import { Baz } from './lib';\n",
+            "lib/index.ts": (
+                "export { Foo } from './foo';\n"
+                "export * from './bar';\n"
+            ),
+            "lib/foo.ts": "export const Foo = 1;\n",
+            "lib/bar.ts": "export const Baz = 2;\n",
+        })
+
+        foo_importers = [
+            i["file"] for i in find_importers(
+                repo=repo, file_path="lib/foo.ts", storage_path=store,
+            ).get("importers", [])
+        ]
+        bar_importers = [
+            i["file"] for i in find_importers(
+                repo=repo, file_path="lib/bar.ts", storage_path=store,
+            ).get("importers", [])
+        ]
+        # Foo consumer credits foo.ts only.
+        assert "consumer-foo.ts" in foo_importers
+        # Baz consumer credits bar.ts via the wildcard fallback.
+        assert "consumer-baz.ts" in bar_importers, (
+            f"wildcard fallback for unrouted name failed; bar.ts importers were {bar_importers}"
+        )
+        # Wildcard means Foo consumer ALSO credits bar.ts (over-credit on
+        # wildcard is the documented v1.93 semantic — preserved in mixed
+        # barrels for unrouted names; the Foo consumer's `Foo` IS routed,
+        # so they should NOT spuriously appear in bar.ts importers).
+        assert "consumer-foo.ts" not in bar_importers, (
+            f"selective name leaked into wildcard fallback; bar.ts importers were {bar_importers}"
+        )
+
+    def test_namespace_import_falls_back_to_wildcard(self, tmp_path):
+        # `import * as ns from './lib'` — no name context, so over-credit
+        # both selective and wildcard leaves (safer than under-crediting).
+        repo, store = self._index(tmp_path, {
+            "consumer.ts":     "import * as lib from './lib';\nlib.Foo();\n",
+            "lib/index.ts":    "export { Foo } from './foo';\n",
+            "lib/foo.ts":      "export function Foo() {}\n",
+        })
+        importers = [
+            i["file"] for i in find_importers(
+                repo=repo, file_path="lib/foo.ts", storage_path=store,
+            ).get("importers", [])
+        ]
+        assert "consumer.ts" in importers, (
+            f"namespace import did not fall back to wildcard; importers were {importers}"
+        )
+
+    def test_chained_selective_re_export_with_rename(self, tmp_path):
+        # consumer -> barrel-A (Foo as Bar) -> barrel-B (Foo) -> leaf
+        repo, store = self._index(tmp_path, {
+            "consumer.ts":   "import { Bar } from './a';\n",
+            "a/index.ts":    "export { Foo as Bar } from '../b';\n",
+            "b/index.ts":    "export { Foo } from '../leaf';\n",
+            "leaf.ts":       "export const Foo = 1;\n",
+        })
+        importers = [
+            i["file"] for i in find_importers(
+                repo=repo, file_path="leaf.ts", storage_path=store,
+            ).get("importers", [])
+        ]
+        assert "consumer.ts" in importers, (
+            f"chained selective re-export with rename failed; importers were {importers}"
+        )
+
+    def test_wildcard_chain_still_works(self, tmp_path):
+        # Regression guard for the v1.93 wildcard path.
+        repo, store = self._index(tmp_path, {
+            "consumer.ts":     "import { Anything } from './lib';\n",
+            "lib/index.ts":    "export * from './leaf';\n",
+            "lib/leaf.ts":     "export const Anything = 1;\n",
+        })
+        importers = [
+            i["file"] for i in find_importers(
+                repo=repo, file_path="lib/leaf.ts", storage_path=store,
+            ).get("importers", [])
+        ]
+        assert "consumer.ts" in importers

@@ -1,11 +1,14 @@
 """Find all files that import from a given file path."""
 
 import time
-from collections import deque
 from typing import Optional
 
 from ..storage import IndexStore
-from ..parser.imports import resolve_specifier
+from ..parser.imports import (
+    build_re_export_maps,
+    expand_barrel_leaves,
+    resolve_specifier,
+)
 from ._utils import resolve_repo
 from .package_registry import (
     build_package_registry,
@@ -14,50 +17,24 @@ from .package_registry import (
 
 
 def _resolve_to_leaves(
-    specifier: str,
+    imp: dict,
     src_file: str,
     source_files: frozenset,
     alias_map,
     psr4_map,
-    re_exports: dict[str, list[str]],
+    wildcard_map: dict[str, list[str]],
+    named_map: dict[str, dict[str, tuple[str, str]]],
 ) -> set[str]:
-    """Resolve `specifier` to its direct target plus every leaf reachable
-    through `export * from` re-export chains. Used by find_importers so
-    that importing a barrel attributes Ca to leaf definition files
-    instead of stopping at the barrel.
+    """Resolve `imp` to its direct target plus every leaf reachable through
+    re-export chains, with per-name routing for selective re-exports.
+
+    For `export { Foo } from './foo'` in a barrel, only consumers that
+    actually import `Foo` from the barrel credit `./foo`.
     """
-    direct = resolve_specifier(specifier, src_file, source_files, alias_map, psr4_map)
+    direct = resolve_specifier(imp["specifier"], src_file, source_files, alias_map, psr4_map)
     if not direct:
         return set()
-    leaves: set[str] = {direct}
-    queue: deque = deque([direct])
-    while queue:
-        t = queue.popleft()
-        for leaf in re_exports.get(t, ()):
-            if leaf not in leaves:
-                leaves.add(leaf)
-                queue.append(leaf)
-    return leaves
-
-
-def _build_re_exports(
-    imports: dict, source_files: frozenset, alias_map, psr4_map,
-) -> dict[str, list[str]]:
-    """Map each barrel file to the files it forwards via `export * from`.
-    Mirrors get_dependency_graph._build_re_export_map; duplicated here to
-    avoid a circular import."""
-    re_exports: dict[str, list[str]] = {}
-    for src_file, file_imports in imports.items():
-        leaves: list[str] = []
-        for imp in file_imports:
-            if not imp.get("is_re_export"):
-                continue
-            target = resolve_specifier(imp["specifier"], src_file, source_files, alias_map, psr4_map)
-            if target and target != src_file:
-                leaves.append(target)
-        if leaves:
-            re_exports[src_file] = list(dict.fromkeys(leaves))
-    return re_exports
+    return expand_barrel_leaves(direct, imp.get("names", []), wildcard_map, named_map)
 
 
 def _find_importers_single(
@@ -82,12 +59,14 @@ def _find_importers_single(
     alias_map = index.alias_map
     psr4_map = getattr(index, "psr4_map", None)
 
-    # v1.93.0: barrel-aware resolution. When a file imports `@nestjs/common`
-    # (which resolves to packages/common/index.ts) and that index.ts has
-    # `export * from './decorators'`, the importer is also credited with
-    # importing the leaf files reached transitively through the chain.
-    # Old indexes without `is_re_export` data degrade to the prior behavior.
-    re_exports = _build_re_exports(index.imports, source_files, alias_map, psr4_map)
+    # v1.94.0: symbol-aware barrel resolution.  Wildcard re-exports
+    # (`export * from`) credit every leaf to anyone importing the barrel
+    # (v1.93 behavior).  Selective re-exports (`export { Foo } from`)
+    # credit only consumers that actually import `Foo` from the barrel.
+    # Old indexes without `re_export_kind` default to wildcard semantics.
+    wildcard_map, named_map = build_re_export_maps(
+        index.imports, source_files, alias_map, psr4_map,
+    )
 
     # Build a set of all files that are imported by at least one other file
     # (used for has_importers). Counts barrel-expanded leaves so a leaf
@@ -99,7 +78,7 @@ def _find_importers_single(
             if imp.get("is_re_export"):
                 continue  # re-exports forward, not consume
             files_that_are_imported.update(
-                _resolve_to_leaves(imp["specifier"], src_file, source_files, alias_map, psr4_map, re_exports)
+                _resolve_to_leaves(imp, src_file, source_files, alias_map, psr4_map, wildcard_map, named_map)
             )
 
     results = []
@@ -110,7 +89,7 @@ def _find_importers_single(
         for imp in file_imports:
             if imp.get("is_re_export"):
                 continue  # re-export-only files are forwarders, not consumers
-            leaves = _resolve_to_leaves(imp["specifier"], src_file, source_files, alias_map, psr4_map, re_exports)
+            leaves = _resolve_to_leaves(imp, src_file, source_files, alias_map, psr4_map, wildcard_map, named_map)
             if file_path in leaves:
                 results.append({
                     "file": src_file,
@@ -167,8 +146,10 @@ def _find_importers_batch(
     alias_map = index.alias_map
     psr4_map = getattr(index, "psr4_map", None)
 
-    # v1.93.0: barrel-aware resolution. See _find_importers_single docstring.
-    re_exports = _build_re_exports(index.imports, source_files, alias_map, psr4_map)
+    # v1.94.0: symbol-aware barrel resolution. See _find_importers_single.
+    wildcard_map, named_map = build_re_export_maps(
+        index.imports, source_files, alias_map, psr4_map,
+    )
 
     # Pass 1: build files_that_are_imported (counts barrel-expanded leaves)
     files_that_are_imported: set[str] = set()
@@ -177,7 +158,7 @@ def _find_importers_batch(
             if imp.get("is_re_export"):
                 continue
             files_that_are_imported.update(
-                _resolve_to_leaves(imp["specifier"], src_file, source_files, alias_map, psr4_map, re_exports)
+                _resolve_to_leaves(imp, src_file, source_files, alias_map, psr4_map, wildcard_map, named_map)
             )
 
     # Pass 2: build import_map. Each importer is recorded under every leaf
@@ -187,7 +168,7 @@ def _find_importers_batch(
         for imp in file_imports:
             if imp.get("is_re_export"):
                 continue
-            leaves = _resolve_to_leaves(imp["specifier"], src_file, source_files, alias_map, psr4_map, re_exports)
+            leaves = _resolve_to_leaves(imp, src_file, source_files, alias_map, psr4_map, wildcard_map, named_map)
             if not leaves:
                 continue
             entry = {

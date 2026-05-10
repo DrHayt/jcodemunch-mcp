@@ -21,12 +21,13 @@ from .sqlite_store import SQLiteIndexStore, _VERIFIED_PATHS
 logger = logging.getLogger(__name__)
 
 # Bump this when the index schema changes in an incompatible way.
-# v10 (1.93.0): import edges may carry `is_re_export: True` to mark
-# `export * from <spec>` (barrel) statements. Old v9 indexes lack this
-# flag and would behave as v1.92.0 (barrels not transitively expanded);
-# bumping forces a full re-extract so downstream coupling/find_importers
-# scoring reflects the fix.
-INDEX_VERSION = 10
+# v11 (1.94.0): re-export edges now carry `re_export_kind` ("wildcard" |
+# "selective") and selective edges include `re_export_origins` mapping
+# exposed names to their underlying name in the leaf file. Old v10 indexes
+# lack the kind field and degrade to wildcard semantics — correct for
+# `export *` but over-credits on `export { X } from`. A fresh re-extract
+# is required for symbol-aware Ca attribution.
+INDEX_VERSION = 11
 
 
 @functools.lru_cache(maxsize=16)
