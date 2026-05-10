@@ -63,7 +63,8 @@ _CANONICAL_TOOL_NAMES: tuple[str, ...] = (
     "get_pr_risk_profile",
     # Architecture
     "get_dependency_cycles", "get_coupling_metrics", "get_layer_violations",
-    "get_extraction_candidates", "get_cross_repo_map", "get_tectonic_map", "get_signal_chains",
+    "get_extraction_candidates", "get_cross_repo_map", "get_group_contracts",
+    "get_tectonic_map", "get_signal_chains",
     "render_diagram", "get_project_intel",
     # Quality & Metrics
     "get_symbol_complexity", "get_churn_rate", "get_hotspots",
@@ -132,7 +133,8 @@ _TOOL_TIER_STANDARD: frozenset[str] = _TOOL_TIER_CORE | frozenset({
     "get_repo_health", "search_ast", "winnow_symbols",
     # Architecture
     "get_dependency_cycles", "get_coupling_metrics", "get_layer_violations",
-    "get_cross_repo_map", "get_tectonic_map", "get_signal_chains",
+    "get_cross_repo_map", "get_group_contracts",
+    "get_tectonic_map", "get_signal_chains",
     "render_diagram", "get_project_intel",
     # Utilities
     "invalidate_cache", "get_watch_status", "analyze_perf", "tune_weights", "check_embedding_drift",
@@ -2755,6 +2757,67 @@ def _build_tools_list() -> list[Tool]:
             },
         ),
         Tool(
+            name="get_group_contracts",
+            description=(
+                "Surface the de-facto API contracts across a group of indexed repos. Walks each "
+                "member's named imports, resolves them to symbols in other members via the package "
+                "registry, and classifies each shared symbol into one of four verdict tiers: "
+                "'de_facto_api' (used by ≥min_importers external repos), 'leaky_internal' (underscore-"
+                "prefixed or in _internal/ but imported externally — architecture violation), "
+                "'dead_contract' (declared public but unused externally; opt-in), 'version_skew' "
+                "(same name imported via multiple specifier roots — coordination risk). Attaches "
+                "stability score (churn-weighted), last breaking change (from get_symbol_provenance), "
+                "and runtime hits (when traces have been ingested). Pairs with get_cross_repo_map: "
+                "that gives the repo-level edge graph; this zooms in to the symbol-level surface."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "repos": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "List of indexed repo IDs (owner/name or bare names). Must be ≥2.",
+                    },
+                    "min_importers": {
+                        "type": "integer",
+                        "description": "Minimum distinct external repo importers to surface a contract (default 2).",
+                        "default": 2,
+                    },
+                    "include_internal": {
+                        "type": "boolean",
+                        "description": "Surface leaky_internal contracts (architecture violations). Default true.",
+                        "default": True,
+                    },
+                    "include_dead_contracts": {
+                        "type": "boolean",
+                        "description": "Surface public symbols with zero external importers. Default false.",
+                        "default": False,
+                    },
+                    "classify": {
+                        "type": "boolean",
+                        "description": "Attach verdict tier per contract. Default true.",
+                        "default": True,
+                    },
+                    "churn_days": {
+                        "type": "integer",
+                        "description": "Window for stability scoring (default 90).",
+                        "default": 90,
+                    },
+                    "max_contracts": {
+                        "type": "integer",
+                        "description": "Cap on returned contracts (default 50).",
+                        "default": 50,
+                    },
+                    "token_budget": {
+                        "type": "integer",
+                        "description": "Hard cap on response payload (default 4000).",
+                        "default": 4000,
+                    },
+                },
+                "required": ["repos"],
+            },
+        ),
+        Tool(
             name="get_tectonic_map",
             description=(
                 "Discover the logical module topology of a codebase by fusing three coupling signals: "
@@ -4233,6 +4296,22 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                     storage_path=storage_path,
                 )
             )
+        elif name == "get_group_contracts":
+            from .tools.get_group_contracts import get_group_contracts
+            result = await asyncio.to_thread(
+                functools.partial(
+                    get_group_contracts,
+                    repos=arguments.get("repos") or [],
+                    min_importers=arguments.get("min_importers", 2),
+                    include_internal=arguments.get("include_internal", True),
+                    include_dead_contracts=arguments.get("include_dead_contracts", False),
+                    classify=arguments.get("classify", True),
+                    churn_days=arguments.get("churn_days", 90),
+                    max_contracts=arguments.get("max_contracts", 50),
+                    token_budget=arguments.get("token_budget", 4000),
+                    storage_path=storage_path,
+                )
+            )
         elif name == "get_tectonic_map":
             from .tools.get_tectonic_map import get_tectonic_map
             result = await asyncio.to_thread(
@@ -5143,7 +5222,7 @@ def _generate_claude_md_snippet(missing_only: bool = False) -> str:
                           "get_layer_violations", "get_extraction_candidates",
                           "get_cross_repo_map", "get_tectonic_map",
                           "get_signal_chains", "render_diagram",
-                          "get_project_intel"]),
+                          "get_project_intel", "get_group_contracts"]),
         ("Quality & Metrics", ["get_symbol_complexity", "get_churn_rate", "get_hotspots",
                                 "get_repo_health", "diff_health_radar",
                                 "get_file_risk", "get_symbol_importance",

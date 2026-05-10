@@ -323,7 +323,7 @@ DEFAULTS = {
             "get_dead_code_v2", "get_untested_symbols", "find_similar_symbols",
             "get_repo_health", "search_ast", "winnow_symbols",
             "get_dependency_cycles", "get_coupling_metrics",
-            "get_layer_violations", "get_cross_repo_map",
+            "get_layer_violations", "get_cross_repo_map", "get_group_contracts",
             "get_tectonic_map", "get_signal_chains", "render_diagram",
             "get_project_intel", "invalidate_cache", "get_watch_status",
             "analyze_perf", "tune_weights", "check_embedding_drift",
@@ -1258,6 +1258,7 @@ def generate_template() -> str:
         "get_context_bundle",
         "get_coupling_metrics",
         "get_cross_repo_map",
+        "get_group_contracts",
         "get_dead_code_v2",
         "get_dependency_cycles",
         "get_dependency_graph",
@@ -1495,7 +1496,7 @@ def generate_template() -> str:
       "get_dead_code_v2", "get_untested_symbols", "find_similar_symbols",
       "get_repo_health", "search_ast", "winnow_symbols",
       "get_dependency_cycles", "get_coupling_metrics",
-      "get_layer_violations", "get_cross_repo_map",
+      "get_layer_violations", "get_cross_repo_map", "get_group_contracts",
       "get_tectonic_map", "get_signal_chains", "render_diagram",
       "get_project_intel", "invalidate_cache"
     ]

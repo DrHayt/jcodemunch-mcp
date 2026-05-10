@@ -2,6 +2,84 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.103.0] — 2026-05-10 — `get_group_contracts`: F-15 cross-repo API surface
+
+Closes the one feature GitNexus's `group_contracts` Pro-tier multi-repo tool
+covered that we didn't: surfacing the de-facto API contracts across a *group*
+of indexed repos. Built as F-15 — not just "list shared symbols" but classify
+intent, score stability, attach breaking-change history, surface runtime
+evidence.
+
+### `get_group_contracts` (new tool, Architecture tier)
+
+Given a list of indexed repo IDs treated as a group, walks each member's
+named imports, resolves them through the package registry to symbols in
+other group members, and classifies each shared symbol into one of four
+verdict tiers:
+
+- **`de_facto_api`** — used by ≥`min_importers` external repos (the actual
+  public surface, regardless of `__all__` or underscore conventions).
+- **`leaky_internal`** — declared internal (underscore prefix or path fragments
+  like `_internal/`, `/private/`) but imported by other repos. Architecture
+  violation — accidentally-public APIs that should be either intentionally
+  promoted or properly hidden.
+- **`dead_contract`** — declared public but imported by zero externals. Opt-in
+  via `include_dead_contracts=True`; candidate for demotion/removal.
+- **`version_skew`** — same logical symbol imported via multiple specifier
+  roots in the group (e.g. direct path vs. re-export). Coordination risk —
+  refactoring one path won't move the others.
+
+### Per-contract metadata
+
+- **`importer_count`** + **`importing_repos`** — who depends on this contract
+- **`stability_score`** — 1.0 = unchanged, decays as `churn_commits_window`
+  rises; log-scaled from `get_churn_rate` over `churn_days` (default 90)
+- **`last_breaking_change`** — best-effort date from `get_symbol_provenance`,
+  filtered to refactor/rename/revert/feature classifications
+- **`runtime_hits`** — total trace hits over the window when Phase 7 runtime
+  tables have rows; omitted otherwise. Read-only / immutable connection so
+  the lookup never bumps WAL mtime or invalidates the CodeIndex LRU cache.
+- **`specifier_roots`** — list of import roots that resolve to this contract;
+  multi-root entries trigger version_skew classification.
+
+### Why F-15 vs. bicycle
+
+GitNexus's `group_contracts` (Pro tier on a PolyForm-NC-licensed product)
+surfaces shared symbols. Our version classifies intent
+(de_facto_api / leaky / dead / version_skew), scores stability against
+churn, tracks the last breaking change from provenance, and folds in
+runtime evidence when traces exist. Pairs with `get_cross_repo_map`: that
+gives the repo-level dep graph; this zooms to the symbol-level surface.
+
+The MunchMaster suite itself is the case study — jcm / jdocmunch /
+jdatamunch / jragmunch / observatory is exactly the multi-repo shape this
+tool is built for. Treat it as `get_group_contracts(repos=[*the_suite*])`.
+
+### Parameters
+
+```python
+get_group_contracts(
+    repos: list[str],                # ≥2 required
+    min_importers: int = 2,
+    include_internal: bool = True,
+    include_dead_contracts: bool = False,
+    classify: bool = True,
+    churn_days: int = 90,
+    max_contracts: int = 50,
+    token_budget: int = 4000,
+)
+```
+
+### Tier registration
+
+- **Standard tier**: included alongside `get_cross_repo_map`.
+- **Full tier** (default): listed under Architecture.
+
+### Tests
+
+16 new tests; full suite at 4204 passed, 7 skipped.
+Schema baseline bumped (~5% per tier; new Tool definition is meaty).
+
 ## [1.102.0] — 2026-05-10 — `find_similar_symbols`: F-15 consolidation detection
 
 Closes the one Pharaoh Pro-tier feature with no free equivalent in our suite:
