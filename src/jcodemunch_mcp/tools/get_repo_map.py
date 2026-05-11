@@ -1,8 +1,8 @@
 """Query-less, token-budgeted, signature-level repo overview.
 
-Equivalent in role to RepoMapper's ``repo_map`` — for cold-start orientation when
-no query exists yet. Reuses the existing PageRank index scores; emits signatures
-only (no bodies) and greedy-packs by file rank under the token budget.
+For cold-start orientation when no query exists yet. Reuses the existing
+PageRank index scores; emits signatures only (no bodies) and greedy-packs
+by file rank under the token budget.
 """
 
 import time

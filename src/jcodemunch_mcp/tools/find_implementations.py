@@ -6,7 +6,7 @@ Multi-source resolution across four channels, each scored by confidence:
   - Duck-typed (0.65)         — classes with a matching method name and no declared inheritance
   - Decorator handler (0.45)  — @decorator-registered handlers (route/cli/signal/event)
 
-Goes beyond a simple list-impls bicycle: classifies each impl, ranks by PageRank,
+Goes beyond a flat list of implementations: classifies each impl, ranks by PageRank,
 attaches a ``differs_by`` breakdown, and supports cross-repo discovery via the
 package registry.
 """

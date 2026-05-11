@@ -5,9 +5,7 @@ All notable changes to jcodemunch-mcp are documented here.
 ## [1.106.0] — 2026-05-11 — multi-process shared-index coordination
 
 Multiple MCP-server processes (Claude Code + Cursor + Codex on the same repo)
-can now safely share one on-disk index. Closes the most legitimate
-differentiator SocratiCode had over us: their `proper-lockfile`-based
-multi-agent shared index.
+can now safely share one on-disk index.
 
 ### What this fixes
 
@@ -25,17 +23,23 @@ multi-agent shared index.
   understand the parallel session and don't misread the idle watcher as a
   bug.
 
-### F-15 differentiation vs. SocratiCode's `proper-lockfile`
+### Capability summary
 
-| Capability | SocratiCode | jcm v1.106.0 |
-|---|---|---|
-| OS-level file locking | ✅ | ✅ atomic O_EXCL + fcntl flock (Unix) |
-| Stale-lock recovery | PID-based | PID-based (auto-released on process exit; OS-level on Unix) |
-| Lock metadata visible cross-process | n/a | sidecar JSON: pid, hostname, client_id, scope, target, started_at |
-| Lock scopes | single | two: `watcher` (one-watcher-per-repo) + `indexwrite` (save coordination) |
-| Status reporting | "active (watched by another process)" | full holder identity via `get_watch_status.watcher_holder` |
-| Wait-and-retry | n/a | `wait_seconds` on the context manager (indexwrite waits 60s; watcher fails fast) |
-| Client identification | n/a | `JCODEMUNCH_CLIENT_ID` env var (defaults to `sys.argv[0]` basename) |
+- Atomic `O_EXCL` create + Unix `fcntl.flock` (cross-platform, no native deps)
+- Stale-lock recovery: PID-based reclaim; OS-level lock auto-released on
+  holder exit (Unix); explicit liveness check on Windows
+- Lock metadata visible cross-process via a sidecar JSON: `pid`, `hostname`,
+  `client_id`, `scope`, `target`, `started_at`
+- Two lock scopes: `watcher` (one-watcher-per-repo) and `indexwrite`
+  (save coordination). Independent — same target, different scopes don't
+  block each other.
+- Status reporting via `get_watch_status.watcher_holder` surfaces full
+  holder identity (pid, client_id, age) so agents understand parallel sessions
+- Wait-and-retry on the context manager: `indexwrite` waits up to 60s for
+  a parallel writer; `watcher` fails fast (legitimate to skip when another
+  process is already watching)
+- Client identification via `JCODEMUNCH_CLIENT_ID` env var (defaults to
+  `sys.argv[0]` basename, so common runtimes are auto-identified)
 
 ### Implementation
 
@@ -89,7 +93,7 @@ documented as an API surface.
 ## [1.105.1] — 2026-05-10 — `install` / `uninstall` / `install-status` CLI verbs
 
 UX polish over the existing `init` machinery. Three new top-level CLI verbs that
-match the per-agent shape competitors like cymbal ship (`cymbal hook install
+match the per-agent shape that's common in installer UX (`<tool> install
 <agent>`), without forcing users to learn the broader `init --client foo
 --claude-md global --hooks --yes` flag combo.
 
@@ -115,8 +119,8 @@ gaps got closed:
 ### Why this is a patch, not a minor
 
 This is wrappers + an uninstall path over existing tested code, not new
-capability. No new MCP tools. The competitive gap (cymbal's per-agent
-installer UX) was real; our underlying machinery already exceeded it.
+capability. No new MCP tools. The UX gap (per-agent install verb shape) was
+real; our underlying machinery already exceeded what was needed.
 
 ### Implementation
 
@@ -151,11 +155,9 @@ wasn't on the temp PATH.
 
 4270 passed (4247 from v1.105.0 + 23 new), 7 skipped.
 
-## [1.105.0] — 2026-05-10 — `assemble_task_context`: F-15 task-aware single-call orchestrator
+## [1.105.0] — 2026-05-10 — `assemble_task_context`: task-aware single-call orchestrator
 
-Closes the one ergonomic gap both vexp (`run_pipeline`) and code-review-graph
-(`get_minimal_context_tool`) independently built and we didn't have: a single
-MCP call that takes a natural-language task and returns task-tailored,
+A single MCP call that takes a natural-language task and returns task-tailored,
 source-attributed context. Two independent competitive validations of the
 pattern made shipping the orchestrator strategic; today's dogfood pass on the
 v1.100→1.104 foundation tools made it safe.
@@ -178,8 +180,8 @@ and override if wrong. The unclear-task default is `explore` with confidence 0.5
 ### Per-entry source attribution
 
 Every entry in the returned capsule carries `stage` and `source_tool` — the agent
-can see which sub-tool produced what. This is the F-15 differentiator: vexp's
-`run_pipeline` capsule is opaque; ours is auditable.
+can see which sub-tool produced what. The capsule is fully auditable rather
+than opaque.
 
 ### Token-budget end-to-end
 
@@ -199,17 +201,17 @@ present in the index. First two anchors used per stage to keep cost bounded.
   can also be added (cross-cutting capability)
 - `cross_repo` — layer cross-repo signals when working across a suite
 
-### Why F-15 (not bicycle)
+### Capability summary
 
-| | vexp `run_pipeline` | code-review-graph `get_minimal_context_tool` | jcodemunch `assemble_task_context` |
-|---|---|---|---|
-| Intent classification | implicit | implicit | **explainable** (keywords + confidence) |
-| Per-entry attribution | — | — | **`stage` + `source_tool`** per entry |
-| Runtime evidence | — | — | woven in when Phase 7 traces exist |
-| Override hooks | limited | limited | **`intent` + `include`** to force stages |
-| Suite-aware | 3-repo Pro cap | single-repo focus | **`cross_repo` flag** + `get_group_contracts` integration |
-| Cost | $19/mo Pro | free (MIT) | free (commercial) |
-| Token budget | per-tool | implicit | **end-to-end greedy pack** |
+- **Intent classification:** explainable, returns matched keywords + confidence
+- **Per-entry attribution:** every capsule entry carries `stage` + `source_tool`
+- **Runtime evidence:** woven in when Phase 7 traces exist
+- **Override hooks:** `intent` forces a strategy; `include` whitelists or
+  adds individual stages
+- **Suite-aware:** `cross_repo` flag layers cross-repo signals via the
+  package registry; integrates `get_group_contracts` automatically
+- **Token budget:** end-to-end greedy pack, not per-sub-tool
+- **License:** free, MIT, no per-tier paywall
 
 ### Dogfood pass
 
@@ -267,11 +269,11 @@ Added `test_test_only_reference_returns_test_coverage_only` (tightened from the
 previous permissive assertion) and `test_test_import_count_surfaced_separately`.
 Full suite: 4228 passed, 7 skipped.
 
-## [1.104.0] — 2026-05-10 — `find_implementations` + `check_delete_safe`: F-15 Serena parity
+## [1.104.0] — 2026-05-10 — `find_implementations` + `check_delete_safe`
 
-Closes two real gaps against [Serena](https://github.com/oraios/serena) — concrete-impl
-discovery and deletion preflight — both built F-15-style with classification,
-confidence scoring, and recommended-action surfaces beyond Serena's bicycle versions.
+Two new capabilities — concrete-impl discovery and deletion preflight — both
+built with classification, confidence scoring, and recommended-action
+surfaces rather than flat list-or-bool primitives.
 
 ### `find_implementations` (new tool, Relationships tier)
 
@@ -310,14 +312,15 @@ Top-5 blockers sorted by severity (1–5 scale), per-signal counts in `signals`,
 and a one-line `recommended_action` per verdict so agents get a concrete next
 step, not just yes/no. Read-only — never mutates the codebase.
 
-### Why F-15, not bicycle
+### Capability summary
 
-- **Serena's `find_implementations`** returns a list. Ours: classified, confidence-scored,
-  ranked, with divergence breakdown and optional cross-repo coverage.
-- **Serena's `safe_delete`** (mutating) verifies refs before deleting. Ours (`check_delete_safe`,
-  read-only): fuses five signals including runtime evidence, classifies into 8 tiers, surfaces
-  the specific blockers + recommended action, and lets the agent apply the deletion via
-  native Edit/Write — keeping us in our read-only design.
+- **`find_implementations`** returns classified, confidence-scored, ranked
+  results with divergence breakdown and optional cross-repo coverage —
+  not just a flat list.
+- **`check_delete_safe`** (read-only) fuses five signals including runtime
+  evidence, classifies into 8 verdict tiers, surfaces the specific blockers
+  + recommended action, and lets the agent apply the deletion via native
+  Edit/Write — keeping us in our read-only design.
 
 ### Tier registration
 
@@ -330,13 +333,11 @@ step, not just yes/no. Read-only — never mutates the codebase.
 23 new tests (10 for `find_implementations`, 13 for `check_delete_safe`).
 Full suite at 4227 passed, 7 skipped.
 
-## [1.103.0] — 2026-05-10 — `get_group_contracts`: F-15 cross-repo API surface
+## [1.103.0] — 2026-05-10 — `get_group_contracts`: classified cross-repo API surface
 
-Closes the one feature GitNexus's `group_contracts` Pro-tier multi-repo tool
-covered that we didn't: surfacing the de-facto API contracts across a *group*
-of indexed repos. Built as F-15 — not just "list shared symbols" but classify
-intent, score stability, attach breaking-change history, surface runtime
-evidence.
+Surfaces the de-facto API contracts across a *group* of indexed repos. Built
+to go beyond a flat list — classifies intent, scores stability, attaches
+breaking-change history, surfaces runtime evidence.
 
 ### `get_group_contracts` (new tool, Architecture tier)
 
@@ -370,10 +371,9 @@ verdict tiers:
 - **`specifier_roots`** — list of import roots that resolve to this contract;
   multi-root entries trigger version_skew classification.
 
-### Why F-15 vs. bicycle
+### Capability summary
 
-GitNexus's `group_contracts` (Pro tier on a PolyForm-NC-licensed product)
-surfaces shared symbols. Our version classifies intent
+Where flat "list shared symbols" lookups stop, this tool classifies intent
 (de_facto_api / leaky / dead / version_skew), scores stability against
 churn, tracks the last breaking change from provenance, and folds in
 runtime evidence when traces exist. Pairs with `get_cross_repo_map`: that
@@ -409,11 +409,10 @@ get_group_contracts(
 16 new tests; full suite at 4204 passed, 7 skipped.
 Schema baseline bumped (~5% per tier; new Tool definition is meaty).
 
-## [1.102.0] — 2026-05-10 — `find_similar_symbols`: F-15 consolidation detection
+## [1.102.0] — 2026-05-10 — `find_similar_symbols`: multi-signal consolidation detection
 
-Closes the one Pharaoh Pro-tier feature with no free equivalent in our suite:
-"Consolidation Opportunities" — finding clusters of similar functions for
-refactor consolidation. Done deliberately as an F-15 rather than a bicycle —
+Finds clusters of similar functions for refactor consolidation. Built with
+multi-signal fusion rather than single-signal lexical match —
 multi-signal scoring, union-find clustering, verdict tiers, canonical pick,
 and a "differs_by" breakdown so the result is actionable, not just suggestive.
 
@@ -458,13 +457,12 @@ jcodemunch-mcp index (7,700+ symbols), the tool returns in ~1–2s.
 - Dunders excluded (`__init__`, `__repr__`, etc. — forced by language)
 - Generated-code filenames skipped (`_pb2.py`, `.gen.go`, `.generated.ts`, ...)
 
-### Why F-15 vs. bicycle
+### Capability summary
 
-Pharaoh's Pro-tier feature does the single-signal cosine version on a hosted
-Neo4j graph for $27/mo. Our version is free, runs offline, blends three signals,
-clusters rather than pairs, and surfaces the canonical pick + difference signal
-so the agent can make a refactor recommendation rather than just a list.
-[Detail in versus.php vs-pharaoh section.](https://j.gravelle.us/jCodeMunch/versus.php#vs-pharaoh)
+Free, runs offline, blends three signals (semantic, structural, behavioral),
+clusters rather than pairs, and surfaces the canonical pick + difference
+signal so the agent can make a refactor recommendation rather than just a
+list. [Comparison detail on the versus page.](https://j.gravelle.us/jCodeMunch/versus.php)
 
 ### Parameters
 
@@ -493,13 +491,12 @@ find_similar_symbols(
 
 ## [1.101.0] — 2026-05-10 — `get_repo_map`: cold-start orientation map
 
-Closes the one feature gap RepoMapper still occupied: the query-less,
-token-budgeted, signature-level repo overview for "I just cloned this
-repo — what matters here?" Every other RepoMapper capability is already
-covered by existing tools (PageRank via `get_symbol_importance`, token
-packing via `get_ranked_context`, richer multi-signal orientation via
-`get_tectonic_map`); this fills the last seam — no query required,
-signatures-only output for breadth per token.
+Adds a query-less, token-budgeted, signature-level repo overview for
+"I just cloned this repo — what matters here?" Fills a seam alongside the
+existing tools — `get_symbol_importance` exposes PageRank, `get_ranked_context`
+does query-driven token packing, `get_tectonic_map` returns multi-signal
+module topology; this tool requires no query and emits signatures only for
+breadth per token.
 
 ### `get_repo_map` (new tool, Quality & Metrics tier)
 
@@ -519,12 +516,11 @@ signatures-only output for breadth per token.
 
 ### Why this exists
 
-The competitive analysis against [RepoMapper](https://github.com/pdavis68/RepoMapper)
-identified one honest feature gap: `get_ranked_context` requires a
-`query`, `get_tectonic_map` returns plate structure (not packed
-signatures), `digest` is delta-focused. None answer the cold-start
-question on a fresh clone. `get_repo_map` does, with full reuse of the
-existing PageRank machinery.
+The existing tools each have a different focus: `get_ranked_context`
+requires a `query`, `get_tectonic_map` returns plate structure (not packed
+signatures), `digest` is delta-focused. None answer the cold-start question
+on a fresh clone. `get_repo_map` does, with full reuse of the existing
+PageRank machinery.
 
 ### Tier registration
 
@@ -1006,10 +1002,8 @@ Roadmap source: [todo.md](../todo.md).
 
 - **4073 passed**, 7 skipped (+14 Phase 2, +21 Phase 1, +21 Phase 0 vs v1.96.2 baseline).
 
-### Differentiation note
+### Scope
 
-This is the first runtime-aware code-intelligence MCP. codebase-memory-mcp's
-`ingest_traces` validates HTTP_CALLS edges only; jCodeMunch's
 `import_runtime_signal` is the foundation for ingesting **every** edge type
 across **multiple** signal sources (Phase 1 ships OTel; Phase 4+ adds SQL
 logs and stack traces; Phase 6 adds opt-in live ingest; Phase 7 wires

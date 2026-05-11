@@ -5,8 +5,7 @@ Given a task description, auto-classifies into one of six intents
 appropriate sequence of underlying tools, then greedy-packs the results
 into a single source-attributed capsule under a token budget.
 
-F-15 differentiation vs. vexp's ``run_pipeline`` and code-review-graph's
-``get_minimal_context_tool``:
+Key properties of the orchestration:
   - Intent classification is explainable (returns ``intent_detected`` +
     ``intent_confidence`` + matched keywords)
   - Each capsule entry tagged with ``source_tool`` so the agent can see

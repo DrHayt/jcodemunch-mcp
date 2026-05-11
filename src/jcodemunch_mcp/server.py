@@ -2183,7 +2183,7 @@ def _build_tools_list() -> list[Tool]:
                 "Classifies each impl (subclass_override / interface_impl / duck_typed / "
                 "decorator_handler / subclass), ranks by PageRank × byte_length, attaches "
                 "differs_by breakdown. Optional cross_repo=true surfaces impls in other indexed "
-                "repos via the package registry. Closes Serena's find_implementations gap."
+                "repos via the package registry."
             ),
             inputSchema={
                 "type": "object",
@@ -2651,8 +2651,8 @@ def _build_tools_list() -> list[Tool]:
                 "Query-less, token-budgeted, signature-level overview of a repository. "
                 "Groups symbols by file, ranks files by PageRank on the import graph, and "
                 "greedy-packs signatures (not bodies) under token_budget. Designed for "
-                "cold-start orientation — 'I just cloned this repo, what matters here?' — "
-                "the niche RepoMapper occupies. Pair with get_tectonic_map (module topology) "
+                "cold-start orientation — 'I just cloned this repo, what matters here?'. "
+                "Pair with get_tectonic_map (module topology) "
                 "and get_ranked_context (query-driven) once you know what to ask for."
             ),
             inputSchema={
