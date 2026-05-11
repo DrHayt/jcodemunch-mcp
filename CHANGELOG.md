@@ -2,6 +2,34 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.107.1] — 2026-05-11 — Truthful unloadable-index reporting
+
+Fixes a real UX trap where `resolve_repo()` could report `indexed: true`
+when only an index artifact existed on disk but could not be loaded by
+query tools — so discovery said the repo was available while every
+follow-up tool failed with a generic "Repository not indexed" message.
+
+### What this fixes
+
+- `IndexLoadStatus` + `inspect_index()`: read-only probe that classifies
+  present-but-unloadable indexes (`sqlite_missing_meta`,
+  `sqlite_corrupt`, `sqlite_future_version`, `json_invalid`) without
+  mutating the existing `load_index()` contract.
+- `resolve_repo()`: `indexed` now means queryable. Diagnostics
+  (`index_present`, `loadable`, `status`, `load_error`, `backend`,
+  `hint`) surface on the response when an index exists but is broken.
+- `list_repos()`: damaged SQLite indexes stay visible with
+  `loadable: false`; a valid legacy JSON fallback is recovered and
+  migrated back to SQLite rather than masked by the broken DB.
+- ~25 tools migrated to a shared `index_status_to_tool_error` helper —
+  generic "not indexed" responses replaced with actionable
+  unloadable-index errors that include the remediation hint.
+- Regression coverage for corrupt metadata, future versions, corrupt
+  SQLite files, JSON fallback recovery, and `list_repos` sort stability
+  with damaged entries.
+
+Contributed by @MariusAdrian88 (#291).
+
 ## [1.107.0] — 2026-05-11 — Claude Agent Skill bundle
 
 Emits a `.claude/skills/jcodemunch/SKILL.md` bundle in the Claude Agent
