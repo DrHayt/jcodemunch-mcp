@@ -53,6 +53,7 @@ _CANONICAL_TOOL_NAMES: tuple[str, ...] = (
     # Search & Retrieval
     "search_symbols", "get_symbol_source", "get_context_bundle",
     "get_file_content", "search_text", "search_columns", "get_ranked_context",
+    "assemble_task_context",
     # Relationships
     "find_importers", "find_references", "check_references",
     "get_dependency_graph", "get_class_hierarchy", "get_related_symbols",
@@ -110,6 +111,7 @@ _TOOL_TIER_CORE: frozenset[str] = frozenset({
     # Search & Retrieval
     "search_symbols", "get_symbol_source", "get_file_content",
     "search_text", "get_context_bundle", "get_ranked_context",
+    "assemble_task_context",
     # Relationships
     "find_importers", "find_references",
 })
@@ -2764,6 +2766,50 @@ def _build_tools_list() -> list[Tool]:
             },
         ),
         Tool(
+            name="assemble_task_context",
+            description=(
+                "Task-aware single-call orchestrator. Auto-classifies task into "
+                "explore/debug/refactor/extend/audit/review intent, runs the right sub-tools, "
+                "returns one source-attributed capsule under token_budget."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "repo": {"type": "string", "description": "Repository identifier"},
+                    "task": {
+                        "type": "string",
+                        "description": "Natural-language task description. Anchors auto-extracted from task text.",
+                    },
+                    "symbols": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Optional anchor symbol IDs or names; auto-extracted from task when omitted.",
+                    },
+                    "intent": {
+                        "type": "string",
+                        "enum": ["explore", "debug", "refactor", "extend", "audit", "review"],
+                        "description": "Optional override; auto-detected from task when omitted.",
+                    },
+                    "token_budget": {
+                        "type": "integer",
+                        "description": "End-to-end hard cap on returned tokens (default 8000).",
+                        "default": 8000,
+                    },
+                    "include": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Optional whitelist of stages to run (e.g. ['anchor', 'blast', 'runtime']).",
+                    },
+                    "cross_repo": {
+                        "type": "boolean",
+                        "description": "When True, layer cross-repo signals (default false).",
+                        "default": False,
+                    },
+                },
+                "required": ["repo", "task"],
+            },
+        ),
+        Tool(
             name="get_changed_symbols",
             description=(
                 "Map a git diff to affected symbols: given two commits, returns which symbols "
@@ -3887,6 +3933,21 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                     include_kinds=arguments.get("include_kinds"),
                     scope=arguments.get("scope"),
                     fusion=arguments.get("fusion", False),
+                    storage_path=storage_path,
+                )
+            )
+        elif name == "assemble_task_context":
+            from .tools.assemble_task_context import assemble_task_context
+            result = await asyncio.to_thread(
+                functools.partial(
+                    assemble_task_context,
+                    repo=arguments["repo"],
+                    task=arguments["task"],
+                    symbols=arguments.get("symbols"),
+                    intent=arguments.get("intent"),
+                    token_budget=arguments.get("token_budget", 8000),
+                    include=arguments.get("include"),
+                    cross_repo=arguments.get("cross_repo", False),
                     storage_path=storage_path,
                 )
             )
@@ -5331,7 +5392,7 @@ def _generate_claude_md_snippet(missing_only: bool = False) -> str:
                        "get_repo_outline", "get_file_tree", "get_file_outline"]),
         ("Search & Retrieval", ["search_symbols", "get_symbol_source", "get_context_bundle",
                                  "get_file_content", "search_text", "search_columns",
-                                 "get_ranked_context"]),
+                                 "get_ranked_context", "assemble_task_context"]),
         ("Relationships", ["find_importers", "find_references", "check_references",
                            "get_dependency_graph", "get_class_hierarchy",
                            "get_related_symbols", "get_call_hierarchy",

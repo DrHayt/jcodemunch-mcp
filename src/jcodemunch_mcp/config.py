@@ -300,6 +300,7 @@ DEFAULTS = {
             "get_repo_outline", "get_file_tree", "get_file_outline",
             "search_symbols", "get_symbol_source", "get_file_content",
             "search_text", "get_context_bundle", "get_ranked_context",
+            "assemble_task_context",
             "find_importers", "find_references",
         ],
         "standard": [
@@ -309,6 +310,7 @@ DEFAULTS = {
             "get_repo_outline", "get_file_tree", "get_file_outline",
             "search_symbols", "get_symbol_source", "get_file_content",
             "search_text", "get_context_bundle", "get_ranked_context",
+            "assemble_task_context",
             "find_importers", "find_references",
             "summarize_repo", "embed_repo", "suggest_queries",
             "search_columns", "check_references",
@@ -1276,6 +1278,7 @@ def generate_template() -> str:
         "get_pr_risk_profile",
         "get_project_intel",
         "get_ranked_context",
+        "assemble_task_context",
         "get_redaction_log",
         "get_related_symbols",
         "get_repo_health",
@@ -1477,6 +1480,7 @@ def generate_template() -> str:
       "get_repo_outline", "get_file_tree", "get_file_outline",
       "search_symbols", "get_symbol_source", "get_file_content",
       "search_text", "get_context_bundle", "get_ranked_context",
+      "assemble_task_context",
       "find_importers", "find_references"
     ],
     "standard": [
@@ -1485,6 +1489,7 @@ def generate_template() -> str:
       "get_repo_outline", "get_file_tree", "get_file_outline",
       "search_symbols", "get_symbol_source", "get_file_content",
       "search_text", "get_context_bundle", "get_ranked_context",
+      "assemble_task_context",
       "find_importers", "find_references",
       "summarize_repo", "embed_repo", "suggest_queries",
       "search_columns", "check_references",

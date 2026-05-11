@@ -2,6 +2,101 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.105.0] — 2026-05-10 — `assemble_task_context`: F-15 task-aware single-call orchestrator
+
+Closes the one ergonomic gap both vexp (`run_pipeline`) and code-review-graph
+(`get_minimal_context_tool`) independently built and we didn't have: a single
+MCP call that takes a natural-language task and returns task-tailored,
+source-attributed context. Two independent competitive validations of the
+pattern made shipping the orchestrator strategic; today's dogfood pass on the
+v1.100→1.104 foundation tools made it safe.
+
+### Intent classification (explainable)
+
+Six intents, classified via keyword scoring with weighted matches:
+
+- **`explore`** — orient on an unfamiliar codebase (digest + hotspots + tectonic)
+- **`debug`** — diagnose a fault (anchor + callers + callees + blast + runtime)
+- **`refactor`** — restructure existing code (anchor + rename_safe + delete_safe + implementations + similar)
+- **`extend`** — add new behaviour (anchor + implementations + similar + decorators)
+- **`audit`** — assess risk/quality (anchor + risk + blast + dead_code + untested)
+- **`review`** — review a PR/diff (changed + blast + risk + similar_changed)
+
+Classification returns `intent_detected`, `intent_confidence` (0.55–0.95),
+and `intent_keywords_matched` so the agent can see *why* a classification fired
+and override if wrong. The unclear-task default is `explore` with confidence 0.5.
+
+### Per-entry source attribution
+
+Every entry in the returned capsule carries `stage` and `source_tool` — the agent
+can see which sub-tool produced what. This is the F-15 differentiator: vexp's
+`run_pipeline` capsule is opaque; ours is auditable.
+
+### Token-budget end-to-end
+
+Single `token_budget` knob bounds the entire orchestration, not per sub-tool.
+Greedy packing under the budget across all stages.
+
+### Anchor extraction
+
+When the caller doesn't pass `symbols`, candidate symbol names are extracted
+from the task via word tokenization with a stop-list, then filtered to names
+present in the index. First two anchors used per stage to keep cost bounded.
+
+### Override hooks
+
+- `intent` — force a specific strategy (e.g. always run review-mode)
+- `include` — whitelist specific stages from the strategy; non-strategy stages
+  can also be added (cross-cutting capability)
+- `cross_repo` — layer cross-repo signals when working across a suite
+
+### Why F-15 (not bicycle)
+
+| | vexp `run_pipeline` | code-review-graph `get_minimal_context_tool` | jcodemunch `assemble_task_context` |
+|---|---|---|---|
+| Intent classification | implicit | implicit | **explainable** (keywords + confidence) |
+| Per-entry attribution | — | — | **`stage` + `source_tool`** per entry |
+| Runtime evidence | — | — | woven in when Phase 7 traces exist |
+| Override hooks | limited | limited | **`intent` + `include`** to force stages |
+| Suite-aware | 3-repo Pro cap | single-repo focus | **`cross_repo` flag** + `get_group_contracts` integration |
+| Cost | $19/mo Pro | free (MIT) | free (commercial) |
+| Token budget | per-tool | implicit | **end-to-end greedy pack** |
+
+### Dogfood pass
+
+Tested against `local/jcodemunch-mcp-0394b683` with all 6 intents before
+shipping. Caught and fixed two bugs in the same session:
+1. Token estimation under-counted (only signature/body; now serialises full payload).
+2. Tectonic-map plate keys (used `anchor_file`; correct is `anchor`).
+
+Both regression-tested. v1.105.0 ships with a clean dogfood.
+
+### Parameters
+
+```python
+assemble_task_context(
+    repo: str,
+    task: str,
+    symbols: list[str] | None = None,
+    intent: str | None = None,           # explore/debug/refactor/extend/audit/review
+    token_budget: int = 8000,
+    include: list[str] | None = None,    # stage whitelist
+    cross_repo: bool = False,
+)
+```
+
+### Tier registration
+
+- **Core tier**: included alongside `get_ranked_context`. Flagship orchestrator.
+- **Standard / Full tiers**: present in both.
+- Listed under Search & Retrieval in `_CANONICAL_TOOL_NAMES`.
+
+### Tests
+
+19 new tests covering intent classification (7), happy path (3), budget (2),
+anchor extraction (2), include override (1), errors (2), result shape (2).
+Full suite at 4247 passed, 7 skipped.
+
 ## [1.104.1] — 2026-05-10 — fix: `check_delete_safe` test-importer classification
 
 Dogfood-discovered bug: when the only importer of a symbol's file was a test file,

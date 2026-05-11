@@ -21,7 +21,7 @@ async def test_server_lists_all_tools():
     try:
         tools = await list_tools()
 
-        assert len(tools) == 79  # +2: find_implementations + check_delete_safe (Serena parity, v1.104.0)
+        assert len(tools) == 80  # +1: assemble_task_context (task-aware orchestrator, v1.105.0)
 
         names = {t.name for t in tools}
         expected = {
@@ -33,7 +33,7 @@ async def test_server_lists_all_tools():
             "get_dependency_graph", "get_blast_radius",
             "get_symbol_diff", "get_class_hierarchy", "get_related_symbols", "suggest_queries",
             "get_symbol_importance", "get_repo_map", "find_similar_symbols", "find_dead_code",
-            "get_changed_symbols", "get_ranked_context", "embed_repo",
+            "get_changed_symbols", "get_ranked_context", "assemble_task_context", "embed_repo",
             "get_cross_repo_map", "get_group_contracts",
             "get_call_hierarchy", "get_impact_preview",
             "get_dependency_cycles", "get_coupling_metrics", "get_layer_violations",
@@ -670,9 +670,9 @@ async def test_disabled_tools_filtered_from_schema(monkeypatch):
         assert "index_repo" not in tool_names
         assert "search_columns" not in tool_names
         assert "get_file_tree" in tool_names  # Not disabled
-        # 79 default tools + test_summarizer (config cleared) - 2 disabled = 78
+        # 80 default tools + test_summarizer (config cleared) - 2 disabled = 79
         # set_tool_tier + announce_model + jcodemunch_guide are force-included even when disabled
-        assert len(tools) == 78
+        assert len(tools) == 79
     finally:
         config_module._GLOBAL_CONFIG.clear()
         config_module._GLOBAL_CONFIG.update(orig_config)
@@ -680,7 +680,7 @@ async def test_disabled_tools_filtered_from_schema(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_disabled_tools_empty_all_tools_present(monkeypatch):
-    """When disabled_tools is empty, all 80 tools are present (79 + test_summarizer)."""
+    """When disabled_tools is empty, all 81 tools are present (80 + test_summarizer)."""
     from jcodemunch_mcp import config as config_module
 
     orig_config = config_module._GLOBAL_CONFIG.copy()
@@ -690,7 +690,7 @@ async def test_disabled_tools_empty_all_tools_present(monkeypatch):
         config_module._GLOBAL_CONFIG["disabled_tools"] = []
 
         tools = await list_tools()
-        assert len(tools) == 80  # 79 + test_summarizer (config cleared, so disabled gate off)
+        assert len(tools) == 81  # 80 + test_summarizer (config cleared, so disabled gate off)
     finally:
         config_module._GLOBAL_CONFIG.clear()
         config_module._GLOBAL_CONFIG.update(orig_config)
