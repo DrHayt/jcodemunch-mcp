@@ -8,7 +8,7 @@ from typing import Optional
 
 from ..storage import IndexStore, record_savings, estimate_savings, cost_avoided as _cost_avoided
 from ..parser.imports import resolve_specifier
-from ._utils import resolve_repo
+from ._utils import index_status_to_tool_error, resolve_fqn, resolve_repo
 
 _BYTES_PER_TOKEN = 4
 
@@ -289,7 +289,7 @@ def get_context_bundle(
     store = IndexStore(base_path=storage_path)
     index = store.load_index(owner, name)
     if not index:
-        return {"error": f"Repository not indexed: {owner}/{name}"}
+        return index_status_to_tool_error(store.inspect_index(owner, name))
 
     # Resolve all symbols
     resolved: list[dict] = []

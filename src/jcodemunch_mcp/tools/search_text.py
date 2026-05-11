@@ -6,7 +6,7 @@ import time
 from typing import Optional
 
 from ..storage import IndexStore, record_savings, estimate_savings, cost_avoided
-from ._utils import resolve_repo
+from ._utils import index_status_to_tool_error, resolve_repo
 
 # Detect nested quantifiers that cause catastrophic backtracking in Python's re engine.
 # Matches patterns like (a+)+, (a*)+, (a+)*, (?:a+){2,}, etc.
@@ -85,7 +85,7 @@ def search_text(
     index = store.load_index(owner, name)
 
     if not index:
-        return {"error": f"Repository not indexed: {owner}/{name}"}
+        return index_status_to_tool_error(store.inspect_index(owner, name))
 
     # Pre-compile file pattern into a single regex (avoids double fnmatch per file)
     files = index.source_files

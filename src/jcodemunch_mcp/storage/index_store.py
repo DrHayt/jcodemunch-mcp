@@ -47,6 +47,43 @@ logger = logging.getLogger(__name__)
 INDEX_VERSION = 16
 
 
+@dataclass(frozen=True)
+class IndexLoadStatus:
+    """Presence and queryability status for a repository index."""
+
+    repo: str
+    owner: str
+    name: str
+    backend: str
+    index_present: bool
+    loadable: bool
+    status: str
+    load_error: Optional[str] = None
+    hint: Optional[str] = None
+    indexed_at: str = ""
+    symbol_count: Optional[int] = None
+    file_count: Optional[int] = None
+    languages: Optional[dict[str, int]] = None
+    index_version: Optional[int] = None
+    git_head: str = ""
+    display_name: str = ""
+    source_root: str = ""
+
+    def as_fields(self, include_empty: bool = False) -> dict:
+        """Return status fields suitable for tool/listing payloads."""
+        fields = {
+            "index_present": self.index_present,
+            "loadable": self.loadable,
+            "status": self.status,
+            "backend": self.backend,
+        }
+        if include_empty or self.load_error:
+            fields["load_error"] = self.load_error
+        if include_empty or self.hint:
+            fields["hint"] = self.hint
+        return fields
+
+
 @functools.lru_cache(maxsize=16)
 def _load_index_json_cached(index_path: str, mtime_ns: int) -> Optional[dict]:
     """Cache parsed JSON keyed on (path, mtime). mtime_ns ensures
@@ -596,6 +633,48 @@ class IndexStore:
         """Return True if an index exists (SQLite or JSON)."""
         return self._sqlite.has_index(owner, name) or self._index_path(owner, name).exists()
 
+    def inspect_index(self, owner: str, name: str, branch: str = "") -> IndexLoadStatus:
+        """Return index presence/loadability without changing load_index's contract."""
+        sqlite_status = self._sqlite.inspect_index(owner, name, branch=branch)
+        if sqlite_status.loadable:
+            return sqlite_status
+
+        if not branch:
+            index_path = self._index_path(owner, name)
+            if index_path.exists():
+                data = _load_index_json_cached(str(index_path), index_path.stat().st_mtime_ns)
+                if data:
+                    return IndexLoadStatus(
+                        repo=data.get("repo", f"{owner}/{name}"),
+                        owner=owner,
+                        name=name,
+                        backend="json",
+                        index_present=True,
+                        loadable=True,
+                        status="loadable",
+                        indexed_at=data.get("indexed_at", ""),
+                        symbol_count=len(data.get("symbols", [])),
+                        file_count=len(data.get("source_files", [])),
+                        languages=data.get("languages", {}),
+                        index_version=data.get("index_version"),
+                        git_head=data.get("git_head", ""),
+                        display_name=data.get("display_name", ""),
+                        source_root=data.get("source_root", ""),
+                    )
+                return IndexLoadStatus(
+                    repo=f"{owner}/{name}",
+                    owner=owner,
+                    name=name,
+                    backend="json",
+                    index_present=True,
+                    loadable=False,
+                    status="json_invalid",
+                    load_error="json_invalid",
+                    hint="Re-index this repository to rebuild the unreadable JSON index.",
+                )
+
+        return sqlite_status
+
     def load_index(self, owner: str, name: str, branch: str = "") -> Optional[CodeIndex]:
         """Load index from storage. Prefers SQLite, auto-migrates from JSON.
 
@@ -759,6 +838,10 @@ class IndexStore:
             "file_count": file_count,
             "languages": data.get("languages", {}),
             "index_version": data.get("index_version", 1),
+            "index_present": True,
+            "loadable": True,
+            "status": "loadable",
+            "backend": "json",
         }
         if data.get("git_head"):
             repo_entry["git_head"] = data["git_head"]
@@ -771,10 +854,31 @@ class IndexStore:
                 repo_entry["source_root"] = remap(data["source_root"], _pairs if _pairs is not None else parse_path_map())
         return repo_entry
 
+    def _try_json_fallback(
+        self,
+        slug: str,
+        _pairs,
+        json_files_to_migrate: list[Path],
+    ) -> Optional[dict]:
+        """Return a legacy JSON listing entry when SQLite is unloadable."""
+        json_path = self.base_path / f"{slug}.json"
+        if not json_path.exists():
+            return None
+        try:
+            with open(json_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            entry = self._repo_entry_from_data(data, _pairs)
+            if entry:
+                json_files_to_migrate.append(json_path)
+            return entry
+        except Exception:
+            return None
+
     def list_repos(self) -> list[dict]:
         """List all indexed repositories (SQLite + legacy JSON)."""
         repos = []
         seen_slugs: set[str] = set()
+        json_files_to_migrate: list[Path] = []
         _pairs = parse_path_map()
 
         # Pass 1: SQLite databases
@@ -786,10 +890,25 @@ class IndexStore:
             seen_slugs.add(slug)
             try:
                 entry = self._sqlite._list_repo_from_db(db_file, _pairs)
+                if entry and entry.get("loadable") is False:
+                    if json_entry := self._try_json_fallback(slug, _pairs, json_files_to_migrate):
+                        repos.append(json_entry)
+                        continue
                 if entry:
                     repos.append(entry)
             except Exception:
                 logger.debug("Skipping corrupted DB: %s", db_file, exc_info=True)
+                parts = slug.split("-", 1)
+                owner, name = parts if len(parts) == 2 else ("local", slug)
+                status = self._sqlite.inspect_index(owner, name)
+                entry = {
+                    "repo": status.repo,
+                    **status.as_fields(include_empty=True),
+                }
+                if json_entry := self._try_json_fallback(slug, _pairs, json_files_to_migrate):
+                    repos.append(json_entry)
+                    continue
+                repos.append(entry)
 
         # Pass 2: legacy JSON — eagerly migrate to SQLite so that every
         # repo is in the canonical format before any tool can interact with it.
@@ -800,8 +919,6 @@ class IndexStore:
         if not any(self.base_path.glob("*.json")):
             repos.sort(key=lambda r: r["repo"])
             return repos
-
-        json_files_to_migrate: list[Path] = []
 
         for meta_file in self.base_path.glob("*.meta.json"):
             slug = meta_file.name.removesuffix(".meta.json")
@@ -844,8 +961,8 @@ class IndexStore:
             if len(parts) != 2:
                 continue
             owner, name = parts
-            if self._sqlite.has_index(owner, name):
-                continue  # already migrated
+            if self._sqlite.inspect_index(owner, name).loadable:
+                continue  # already migrated and loadable
             try:
                 logger.info("Eager-migrating %s from JSON to SQLite", json_path)
                 self._sqlite.migrate_from_json(json_path, owner, name)

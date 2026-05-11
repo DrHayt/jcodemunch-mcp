@@ -9,7 +9,7 @@ from typing import Optional
 
 from ..storage import IndexStore, CodeIndex, record_savings, estimate_savings, cost_avoided
 from ..parser.imports import resolve_specifier
-from ._utils import resolve_repo, resolve_fqn
+from ._utils import resolve_repo, resolve_fqn, index_status_to_tool_error
 
 BYTES_PER_TOKEN = 4
 
@@ -558,7 +558,7 @@ def search_symbols(
     index = store.load_index(owner, name)
 
     if not index:
-        return {"error": f"Repository not indexed: {owner}/{name}"}
+        return index_status_to_tool_error(store.inspect_index(owner, name))
 
     # Feature 5: Search result cache
     # Skip cache for debug/semantic modes (these need fresh data)

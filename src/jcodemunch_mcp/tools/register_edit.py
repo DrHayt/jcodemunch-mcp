@@ -4,8 +4,8 @@ import time
 import logging
 from typing import Optional
 
-from ..storage.sqlite_store import SQLiteIndexStore
-from ._utils import resolve_repo
+from ..storage import IndexStore
+from ._utils import index_status_to_tool_error, resolve_repo
 
 _logger = logging.getLogger(__name__)
 
@@ -40,10 +40,10 @@ def register_edit(
     except ValueError as e:
         return {"error": str(e)}
 
-    store = SQLiteIndexStore(base_path=storage_path)
+    store = IndexStore(base_path=storage_path)
     index = store.load_index(owner, name)
     if not index:
-        return {"error": f"Repository not indexed: {owner}/{name}"}
+        return index_status_to_tool_error(store.inspect_index(owner, name))
 
     # Get journal for recording
     if _journal is None:

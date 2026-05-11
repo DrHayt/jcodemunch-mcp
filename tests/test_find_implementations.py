@@ -145,6 +145,9 @@ class TestFindImplementationsErrors:
         storage = str(tmp_path / ".index")
         result = find_implementations("nope/repo", symbol="X", storage_path=storage)
         assert "error" in result
+        assert result["loadable"] is False
+        assert result["status"] == "missing"
+        assert result["load_error"] == "missing"
 
     def test_unknown_symbol(self, tmp_path):
         repo, storage = _make_repo(tmp_path, _INHERITANCE_REPO)

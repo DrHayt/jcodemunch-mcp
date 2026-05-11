@@ -11,7 +11,7 @@ from .. import config as _config
 from ..storage import IndexStore, record_savings, estimate_savings, cost_avoided
 from ..storage.index_store import _get_git_head
 from ..parser.imports import resolve_specifier
-from ._utils import resolve_repo
+from ._utils import load_repo_index_or_error
 from .pagerank import compute_pagerank
 
 
@@ -33,16 +33,11 @@ def get_repo_outline(
     """
     start = time.perf_counter()
 
-    try:
-        owner, name = resolve_repo(repo, storage_path)
-    except ValueError as e:
-        return {"error": str(e)}
-
+    index, error, _status = load_repo_index_or_error(repo, storage_path)
+    if error:
+        return error
+    owner, name = index.owner, index.name
     store = IndexStore(base_path=storage_path)
-    index = store.load_index(owner, name)
-
-    if not index:
-        return {"error": f"Repository not indexed: {owner}/{name}"}
 
     # Compute directory-level stats
     # For large repos, use 2-level grouping so agents get useful navigation hints.

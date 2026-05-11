@@ -512,6 +512,10 @@ def test_list_repos_eagerly_migrates_json(tmp_path):
     repos = store.list_repos()
     assert len(repos) == 1
     assert repos[0]["repo"] == "local/test-abc123"
+    assert repos[0]["index_present"] is True
+    assert repos[0]["loadable"] is True
+    assert repos[0]["status"] == "loadable"
+    assert "load_error" not in repos[0]
 
     # After list_repos, the .db must exist (eager migration happened).
     db_path = tmp_path / "local-test-abc123.db"
@@ -523,6 +527,30 @@ def test_list_repos_eagerly_migrates_json(tmp_path):
     # The original .json should be renamed to .json.migrated
     assert not json_path.exists(), ".json should be gone after migration"
     assert (tmp_path / "local-test-abc123.json.migrated").exists()
+
+
+def test_list_repos_uses_json_fallback_when_sqlite_meta_is_missing(tmp_path):
+    """A valid legacy JSON index remains loadable when SQLite metadata is damaged."""
+    json_path = _write_legacy_json(tmp_path)
+    sqlite_store = SQLiteIndexStore(base_path=str(tmp_path))
+    db_path = sqlite_store._db_path("local", "test-abc123")
+    conn = sqlite_store._connect(db_path)
+    try:
+        conn.execute("DELETE FROM meta")
+        conn.commit()
+    finally:
+        conn.close()
+
+    store = IndexStore(base_path=str(tmp_path))
+    repos = store.list_repos()
+
+    assert len(repos) == 1
+    assert repos[0]["repo"] == "local/test-abc123"
+    assert repos[0]["loadable"] is True
+    assert repos[0]["status"] == "loadable"
+    assert "load_error" not in repos[0]
+    assert db_path.exists(), ".db must exist after JSON fallback migration"
+    assert not json_path.exists(), ".json should be migrated after fallback"
 
 
 def test_save_index_cleans_up_zombie_json(tmp_path):

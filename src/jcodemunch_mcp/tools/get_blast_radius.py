@@ -7,7 +7,7 @@ from typing import Optional
 
 from ..storage import IndexStore, result_cache_get, result_cache_put
 from ..parser.imports import resolve_specifier
-from ._utils import resolve_repo, resolve_fqn
+from ._utils import index_status_to_tool_error, resolve_repo, resolve_fqn
 from .package_registry import extract_root_package_from_specifier
 from ._call_graph import build_symbols_by_file, _word_match, find_direct_callers, bfs_callers
 from .find_dead_code import _is_test_file
@@ -191,7 +191,7 @@ def get_blast_radius(
     store = IndexStore(base_path=storage_path)
     index = store.load_index(owner, name)
     if not index:
-        return {"error": f"Repository not indexed: {owner}/{name}"}
+        return index_status_to_tool_error(store.inspect_index(owner, name))
 
     if index.imports is None:
         return {

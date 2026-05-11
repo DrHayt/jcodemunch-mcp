@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 import pytest
 
+from jcodemunch_mcp.storage.index_store import IndexLoadStatus
 from jcodemunch_mcp.tools import digest as digest_mod
 
 
@@ -153,13 +154,24 @@ class TestComposeDigestErrors:
         class _NullStore:
             def __init__(self, base_path=None): pass
             def load_index(self, *a, **kw): return None
+            def inspect_index(self, owner, name):
+                return IndexLoadStatus(
+                    repo=f"{owner}/{name}",
+                    owner=owner,
+                    name=name,
+                    backend="none",
+                    index_present=False,
+                    loadable=False,
+                    status="missing",
+                    load_error="missing",
+                )
 
         monkeypatch.setattr(digest_mod, "IndexStore", _NullStore)
         monkeypatch.setattr(digest_mod, "resolve_repo", lambda r, sp=None: ("local", "name"))
 
         result = digest_mod.compose_digest("anything")
         assert "error" in result
-        assert "not indexed" in result["error"]
+        assert "not loadable" in result["error"]
 
 
 class TestStateFileHelpers:

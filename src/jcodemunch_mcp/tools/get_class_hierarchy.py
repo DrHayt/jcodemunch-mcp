@@ -6,7 +6,7 @@ from collections import deque
 from typing import Optional
 
 from ..storage import IndexStore
-from ._utils import resolve_repo
+from ._utils import index_status_to_tool_error, resolve_repo
 
 # Patterns to extract base class / interface names from signatures
 _EXTENDS_RE = re.compile(
@@ -95,7 +95,7 @@ def get_class_hierarchy(
     store = IndexStore(base_path=storage_path)
     index = store.load_index(owner, name)
     if not index:
-        return {"error": f"Repository not indexed: {owner}/{name}"}
+        return index_status_to_tool_error(store.inspect_index(owner, name))
 
     class_by_name, children_of = _build_class_maps(index.symbols)
 

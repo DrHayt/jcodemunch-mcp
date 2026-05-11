@@ -215,6 +215,94 @@ def test_list_repos(tmp_path):
     assert any(r["repo"] == "local/proj-a" for r in repos)
 
 
+def test_list_repos_marks_missing_meta_repo_unloadable(tmp_path):
+    """SQLite list_repos keeps damaged repos visible with status details."""
+    store = SQLiteIndexStore(base_path=str(tmp_path))
+    store.save_index(
+        owner="local", name="broken",
+        source_files=["a.py"], symbols=[_make_symbol("f")],
+        raw_files={"a.py": "x"}, display_name="Broken",
+    )
+    db_path = store._db_path("local", "broken")
+    conn = sqlite3.connect(str(db_path))
+    try:
+        conn.execute("DELETE FROM meta")
+        conn.commit()
+    finally:
+        conn.close()
+
+    repos = store.list_repos()
+    broken = next(r for r in repos if r["repo"] == "local/broken")
+
+    assert broken["loadable"] is False
+    assert broken["status"] == "sqlite_missing_meta"
+    assert broken["load_error"] == "sqlite_missing_meta"
+    assert "Re-index" in broken["hint"]
+
+
+def test_list_repos_marks_invalid_index_version_unloadable(tmp_path):
+    """SQLite list_repos does not report corrupt version metadata as loadable."""
+    store = SQLiteIndexStore(base_path=str(tmp_path))
+    store.save_index(
+        owner="local", name="broken-version",
+        source_files=["a.py"], symbols=[_make_symbol("f")],
+        raw_files={"a.py": "x"}, display_name="Broken Version",
+    )
+    db_path = store._db_path("local", "broken-version")
+    conn = sqlite3.connect(str(db_path))
+    try:
+        conn.execute("UPDATE meta SET value = ? WHERE key = ?", ("not-an-int", "index_version"))
+        conn.commit()
+    finally:
+        conn.close()
+
+    repos = store.list_repos()
+    broken = next(r for r in repos if r["repo"] == "local/broken-version")
+
+    assert broken["loadable"] is False
+    assert broken["status"] == "sqlite_corrupt"
+    assert broken["load_error"] == "sqlite_corrupt"
+    assert "Re-index" in broken["hint"]
+
+
+def test_list_repos_marks_corrupt_database_unloadable(tmp_path):
+    """SQLite list_repos keeps corrupt DB files visible with status details."""
+    store = SQLiteIndexStore(base_path=str(tmp_path))
+    db_path = tmp_path / "local-corrupt-db.db"
+    db_path.write_text("not a sqlite database", encoding="utf-8")
+
+    repos = store.list_repos()
+    corrupt = next(r for r in repos if r["repo"] == "local/corrupt-db")
+
+    assert corrupt["loadable"] is False
+    assert corrupt["status"] == "sqlite_corrupt"
+    assert corrupt["load_error"] == "sqlite_corrupt"
+    assert "Re-index" in corrupt["hint"]
+
+
+def test_inspect_index_tolerates_invalid_languages_metadata(tmp_path):
+    """SQLite inspect_index treats non-fatal languages metadata like load_index."""
+    store = SQLiteIndexStore(base_path=str(tmp_path))
+    store.save_index(
+        owner="local", name="broken-languages",
+        source_files=["a.py"], symbols=[_make_symbol("f")],
+        raw_files={"a.py": "x"}, display_name="Broken Languages",
+    )
+    db_path = store._db_path("local", "broken-languages")
+    conn = sqlite3.connect(str(db_path))
+    try:
+        conn.execute("UPDATE meta SET value = ? WHERE key = ?", ("{not-json", "languages"))
+        conn.commit()
+    finally:
+        conn.close()
+
+    status = store.inspect_index("local", "broken-languages")
+
+    assert status.loadable is True
+    assert status.status == "loadable"
+    assert status.languages == {}
+
+
 def test_get_symbol_content(tmp_path):
     """get_symbol_content reads by byte offset from content cache."""
     store = SQLiteIndexStore(base_path=str(tmp_path))

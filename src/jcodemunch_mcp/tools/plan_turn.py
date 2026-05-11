@@ -4,8 +4,7 @@ import heapq
 import time
 from typing import Optional
 
-from ..storage.sqlite_store import SQLiteIndexStore
-from ._utils import resolve_repo
+from ._utils import load_repo_index_or_error
 from .search_symbols import (
     _tokenize,
     _compute_bm25,
@@ -50,15 +49,10 @@ def plan_turn(
     if len(query) > 500:
         return {"error": f"Query too long ({len(query)} chars, max 500)"}
 
-    try:
-        owner, name = resolve_repo(repo, storage_path)
-    except ValueError as e:
-        return {"error": str(e)}
-
-    store = SQLiteIndexStore(base_path=storage_path)
-    index = store.load_index(owner, name)
-    if not index:
-        return {"error": f"Repository not indexed: {owner}/{name}"}
+    index, error, _status = load_repo_index_or_error(repo, storage_path)
+    if error:
+        return error
+    owner, name = index.owner, index.name
 
     # Get BM25 cache
     cache = index._bm25_cache

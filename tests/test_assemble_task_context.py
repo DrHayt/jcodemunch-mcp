@@ -166,6 +166,9 @@ class TestAssembleErrors:
             storage_path=storage,
         )
         assert "error" in result
+        assert result["loadable"] is False
+        assert result["status"] == "missing"
+        assert result["load_error"] == "missing"
 
     def test_invalid_intent(self, tmp_path):
         repo, storage = _make_repo(tmp_path, _REPO)

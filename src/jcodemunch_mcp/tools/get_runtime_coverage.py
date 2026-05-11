@@ -31,7 +31,7 @@ import sqlite3
 import time
 from typing import Optional
 
-from ._utils import resolve_repo
+from ._utils import index_status_to_tool_error, resolve_repo
 from ..storage import IndexStore
 
 
@@ -63,9 +63,12 @@ def get_runtime_coverage(
         return {"error": str(e)}
 
     store = IndexStore(base_path=storage_path)
+    status = store.inspect_index(owner, name)
+    if not status.loadable:
+        return index_status_to_tool_error(status)
     db_path = store._sqlite._db_path(owner, name)  # type: ignore[attr-defined]
     if not db_path.exists():
-        return {"error": f"Repository not indexed: {owner}/{name}"}
+        return index_status_to_tool_error(store.inspect_index(owner, name))
 
     scope = f"file:{file_path}" if file_path else "repo"
     response: dict = {

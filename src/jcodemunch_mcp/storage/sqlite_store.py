@@ -1278,7 +1278,11 @@ class SQLiteIndexStore:
             if not meta:
                 return None
 
-            stored_version = int(meta.get("index_version", "0"))
+            try:
+                stored_version = int(meta.get("index_version", "0"))
+            except (TypeError, ValueError):
+                logger.warning("Corrupt index version for %s/%s", owner, name)
+                return None
             if stored_version > cast(int, _INDEX_VERSION):
                 logger.warning("Index version %d > current %d for %s/%s", stored_version, _INDEX_VERSION, owner, name)
                 return None
@@ -1321,6 +1325,113 @@ class SQLiteIndexStore:
             post_mtime_ns = 0
         _cache_put(owner, safe_name, post_mtime_ns, index, branch)
         return index
+
+    def inspect_index(self, owner: str, name: str, branch: str = ""):
+        """Check SQLite index presence and compatibility without loading rows."""
+        _ensure_index_store_deps()
+        from .index_store import IndexLoadStatus
+
+        safe_name = self._safe_repo_component(name, "name")
+        db_path = self._db_path(owner, safe_name)
+        repo_id = f"{owner}/{safe_name}"
+        if not db_path.exists():
+            return IndexLoadStatus(
+                repo=repo_id,
+                owner=owner,
+                name=safe_name,
+                backend="none",
+                index_present=False,
+                loadable=False,
+                status="missing",
+                load_error="missing",
+                hint="Call index_folder to index this repository.",
+            )
+
+        try:
+            conn = self._connect(db_path)
+            try:
+                meta = self._read_meta(conn)
+                if not meta:
+                    return IndexLoadStatus(
+                        repo=repo_id,
+                        owner=owner,
+                        name=safe_name,
+                        backend="sqlite",
+                        index_present=True,
+                        loadable=False,
+                        status="sqlite_missing_meta",
+                        load_error="sqlite_missing_meta",
+                        hint="Re-index this repository to rebuild missing SQLite metadata.",
+                    )
+
+                try:
+                    stored_version = int(meta.get("index_version", "0"))
+                except (TypeError, ValueError):
+                    return IndexLoadStatus(
+                        repo=meta.get("repo", repo_id),
+                        owner=owner,
+                        name=safe_name,
+                        backend="sqlite",
+                        index_present=True,
+                        loadable=False,
+                        status="sqlite_corrupt",
+                        load_error="sqlite_corrupt",
+                        hint="Re-index this repository to rebuild corrupt SQLite metadata.",
+                        indexed_at=meta.get("indexed_at", ""),
+                        display_name=meta.get("display_name", ""),
+                        source_root=meta.get("source_root", ""),
+                    )
+
+                symbol_count = conn.execute("SELECT COUNT(*) FROM symbols").fetchone()[0]
+                file_count = conn.execute("SELECT COUNT(*) FROM files").fetchone()[0]
+                try:
+                    languages = json.loads(meta.get("languages", "{}"))
+                except (TypeError, json.JSONDecodeError):
+                    logger.warning("Corrupted languages JSON in metadata, defaulting to empty")
+                    languages = {}
+                base_kwargs = {
+                    "repo": meta.get("repo", repo_id),
+                    "owner": owner,
+                    "name": safe_name,
+                    "backend": "sqlite",
+                    "index_present": True,
+                    "indexed_at": meta.get("indexed_at", ""),
+                    "symbol_count": symbol_count,
+                    "file_count": file_count,
+                    "languages": languages,
+                    "index_version": stored_version,
+                    "git_head": meta.get("git_head", ""),
+                    "display_name": meta.get("display_name", ""),
+                    "source_root": meta.get("source_root", ""),
+                }
+                if stored_version > cast(int, _INDEX_VERSION):
+                    return IndexLoadStatus(
+                        **base_kwargs,
+                        loadable=False,
+                        status="sqlite_future_version",
+                        load_error="sqlite_future_version",
+                        hint="Re-index this repository with the current server version.",
+                    )
+                return IndexLoadStatus(
+                    **base_kwargs,
+                    loadable=True,
+                    status="loadable",
+                )
+            finally:
+                conn.close()
+        except sqlite3.DatabaseError:
+            logger.debug("Failed to inspect SQLite index: %s", db_path, exc_info=True)
+            return IndexLoadStatus(
+                repo=repo_id,
+                owner=owner,
+                name=safe_name,
+                backend="sqlite",
+                index_present=True,
+                loadable=False,
+                status="sqlite_corrupt",
+                load_error="sqlite_corrupt",
+                hint="Re-index this repository to rebuild the corrupt SQLite index.",
+            )
 
     def has_index(self, owner: str, name: str) -> bool:
         """Return True if a .db file exists for this repo."""
@@ -1694,6 +1805,14 @@ class SQLiteIndexStore:
                     repos.append(entry)
             except Exception:
                 logger.debug("Skipping corrupted DB: %s", db_file, exc_info=True)
+                slug = db_file.stem
+                parts = slug.split("-", 1)
+                owner, name = parts if len(parts) == 2 else ("local", slug)
+                status = self.inspect_index(owner, name)
+                repos.append({
+                    "repo": status.repo,
+                    **status.as_fields(include_empty=True),
+                })
         repos.sort(key=lambda repo: repo["repo"])
         return repos
 
@@ -1701,9 +1820,18 @@ class SQLiteIndexStore:
         """Read repo metadata from a .db file for list_repos."""
         if _pairs is None:
             _pairs = parse_path_map()
+        slug = db_path.stem
+        parts = slug.split("-", 1)
+        owner, name = parts if len(parts) == 2 else ("local", slug)
         conn = self._connect(db_path)
         try:
             meta = self._read_meta(conn)
+            if not meta or not meta.get("repo"):
+                status = self.inspect_index(owner, name)
+                return {
+                    "repo": status.repo,
+                    **status.as_fields(include_empty=True),
+                }
             symbol_count = conn.execute("SELECT COUNT(*) FROM symbols").fetchone()[0]
             file_count = conn.execute("SELECT COUNT(*) FROM files").fetchone()[0]
             # Read branch info if branch tables exist
@@ -1728,20 +1856,48 @@ class SQLiteIndexStore:
         finally:
             conn.close()
 
-        if not meta or not meta.get("repo"):
-            return None
-        languages = json.loads(meta.get("languages", "{}"))
         entry = {
             "repo": meta.get("repo", ""),
             "indexed_at": meta.get("indexed_at", ""),
             "symbol_count": symbol_count,
             "file_count": file_count,
-            "languages": languages,
-            "index_version": int(meta.get("index_version", "0")),
             "git_head": meta.get("git_head", ""),
             "display_name": meta.get("display_name", ""),
             "source_root": remap(meta.get("source_root", ""), _pairs),
+            "index_present": True,
+            "backend": "sqlite",
         }
+
+        try:
+            index_version = int(meta.get("index_version", "0"))
+        except (TypeError, ValueError):
+            entry.update({
+                "loadable": False,
+                "status": "sqlite_corrupt",
+                "load_error": "sqlite_corrupt",
+                "hint": "Re-index this repository to rebuild corrupt SQLite metadata.",
+            })
+            if branches:
+                entry["branches"] = branches
+            return entry
+
+        try:
+            languages = json.loads(meta.get("languages", "{}"))
+        except (TypeError, json.JSONDecodeError):
+            logger.warning("Corrupted languages JSON in metadata, defaulting to empty")
+            languages = {}
+
+        loadable = index_version <= cast(int, _INDEX_VERSION)
+        status = "loadable" if loadable else "sqlite_future_version"
+        entry.update({
+            "languages": languages,
+            "index_version": index_version,
+            "loadable": loadable,
+            "status": status,
+        })
+        if not loadable:
+            entry["load_error"] = status
+            entry["hint"] = "Re-index this repository with the current server version."
         if branches:
             entry["branches"] = branches
         return entry

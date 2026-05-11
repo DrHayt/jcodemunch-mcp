@@ -5,7 +5,7 @@ from fnmatch import fnmatch
 from typing import Optional
 
 from ..storage import IndexStore, record_savings, estimate_savings, cost_avoided as _cost_avoided
-from ._utils import resolve_repo
+from ._utils import index_status_to_tool_error, resolve_repo
 from .get_context_bundle import _count_tokens
 from .search_symbols import (
     _tokenize,
@@ -127,7 +127,7 @@ def get_ranked_context(
     store = IndexStore(base_path=storage_path)
     index = store.load_index(owner, name)
     if not index:
-        return {"error": f"Repository not indexed: {owner}/{name}"}
+        return index_status_to_tool_error(store.inspect_index(owner, name))
 
     # BM25 corpus — cached on CodeIndex
     query_terms = _tokenize(query) or [query.lower()]

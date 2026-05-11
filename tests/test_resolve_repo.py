@@ -1,9 +1,12 @@
 """Tests for resolve_repo tool."""
 
 import hashlib
+import sqlite3
 
 import pytest
 
+from jcodemunch_mcp.storage import INDEX_VERSION, IndexStore
+from jcodemunch_mcp.storage.sqlite_store import _cache_evict
 from jcodemunch_mcp.tools.resolve_repo import resolve_repo, _compute_repo_id
 from jcodemunch_mcp.watcher import _local_repo_id
 from jcodemunch_mcp.tools.index_folder import index_folder
@@ -27,6 +30,28 @@ class TestComputeRepoId:
 
 
 class TestResolveRepo:
+    def _index_project(self, tmp_path, name="loadability"):
+        project = tmp_path / name
+        project.mkdir()
+        (project / "main.py").write_text("def hello(): pass\n")
+        store_path = str(tmp_path / "store")
+
+        index_folder(str(project), use_ai_summaries=False, storage_path=store_path)
+        repo_id = _compute_repo_id(project)
+        owner, repo_name = repo_id.split("/", 1)
+        return project, store_path, owner, repo_name
+
+    def _mutate_sqlite_meta(self, store_path, owner, name, sql, params=()):
+        store = IndexStore(base_path=store_path)
+        db_path = store._sqlite._db_path(owner, name)
+        conn = sqlite3.connect(str(db_path))
+        try:
+            conn.execute(sql, params)
+            conn.commit()
+        finally:
+            conn.close()
+        _cache_evict(owner, name)
+
     def test_resolve_exact_indexed_root(self, tmp_path):
         """Resolving an indexed root returns indexed: true with metadata."""
         project = tmp_path / "myproject"
@@ -43,6 +68,42 @@ class TestResolveRepo:
         assert result["symbol_count"] >= 1
         assert result["file_count"] >= 1
         assert "hint" not in result
+
+    def test_resolve_future_version_index_reports_unloadable(self, tmp_path):
+        """A present but future-version SQLite index is not queryable."""
+        project, store_path, owner, name = self._index_project(tmp_path, "futurever")
+        self._mutate_sqlite_meta(
+            store_path,
+            owner,
+            name,
+            "INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)",
+            ("index_version", str(INDEX_VERSION + 100)),
+        )
+
+        result = resolve_repo(str(project), storage_path=store_path)
+
+        assert result["found"] is True
+        assert result["index_present"] is True
+        assert result["indexed"] is False
+        assert result["loadable"] is False
+        assert result["status"] == "sqlite_future_version"
+        assert result["load_error"] == "sqlite_future_version"
+        assert result["hint"]
+
+    def test_resolve_missing_meta_index_reports_unloadable(self, tmp_path):
+        """A present SQLite index without metadata is not queryable."""
+        project, store_path, owner, name = self._index_project(tmp_path, "missingmeta")
+        self._mutate_sqlite_meta(store_path, owner, name, "DELETE FROM meta")
+
+        result = resolve_repo(str(project), storage_path=store_path)
+
+        assert result["found"] is True
+        assert result["index_present"] is True
+        assert result["indexed"] is False
+        assert result["loadable"] is False
+        assert result["status"] == "sqlite_missing_meta"
+        assert result["load_error"] == "sqlite_missing_meta"
+        assert result["hint"]
 
     def test_resolve_subdirectory_via_git(self, tmp_path, monkeypatch):
         """Resolving a subdirectory finds the repo via git root."""

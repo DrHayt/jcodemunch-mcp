@@ -76,6 +76,40 @@ def resolve_repo(repo: str, storage_path: Optional[str] = None) -> tuple[str, st
     return candidates[0].split("/", 1)
 
 
+def index_status_to_tool_error(status) -> dict:
+    """Convert an index status probe into a consistent tool error."""
+    hint = status.hint or "Re-index this repository to rebuild the index."
+    return {
+        "error": f"Repository index is not loadable: {status.repo}",
+        "repo": status.repo,
+        "index_present": status.index_present,
+        "loadable": status.loadable,
+        "status": status.status,
+        "load_error": status.load_error or status.status,
+        "hint": hint,
+    }
+
+
+def load_repo_index_or_error(
+    repo: str,
+    storage_path: Optional[str] = None,
+    branch: str = "",
+) -> tuple[Optional[object], Optional[dict], Optional[object]]:
+    """Resolve and load a repo index, returning a structured error on failure."""
+    try:
+        owner, name = resolve_repo(repo, storage_path)
+    except ValueError as e:
+        return None, {"error": str(e)}, None
+
+    store = IndexStore(base_path=storage_path)
+    index = store.load_index(owner, name, branch=branch)
+    if index is not None:
+        return index, None, None
+
+    status = store.inspect_index(owner, name, branch=branch)
+    return None, index_status_to_tool_error(status), status
+
+
 def resolve_fqn(
     repo: str, fqn: str, storage_path: Optional[str] = None
 ) -> tuple[Optional[str], Optional[str]]:
@@ -93,7 +127,9 @@ def resolve_fqn(
     store = IndexStore(base_path=storage_path)
     index = store.load_index(owner, name)
     if not index:
-        return None, f"Repository not indexed: {owner}/{name}"
+        status = store.inspect_index(owner, name)
+        err = index_status_to_tool_error(status)
+        return None, f"{err['error']} ({err['load_error']}). {err['hint']}"
     if not getattr(index, "source_root", None):
         return None, "Index has no source_root (remote indexes don't support FQN resolution)"
     psr4 = build_psr4_map(index.source_root)

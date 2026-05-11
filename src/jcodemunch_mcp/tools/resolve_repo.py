@@ -127,22 +127,29 @@ def resolve_repo(path: str, storage_path: Optional[str] = None) -> dict:
     for candidate in candidates:
         repo_id = _compute_repo_id(candidate)
         owner, name = repo_id.split("/", 1)
-        if store.has_index(owner, name):
+        status = store.inspect_index(owner, name)
+        if status.index_present:
             # Read metadata from sidecar or full index
             entry = _read_repo_metadata(store, owner, name)
             elapsed = (time.perf_counter() - start) * 1000
             result = {
                 "found": True,
-                "indexed": True,
+                "indexed": status.loadable,
                 "repo": repo_id,
-                "source_root": entry.get("source_root", ""),
-                "display_name": entry.get("display_name", ""),
-                "symbol_count": entry.get("symbol_count", 0),
-                "file_count": entry.get("file_count", 0),
-                "languages": entry.get("languages", {}),
-                "indexed_at": entry.get("indexed_at", ""),
+                **status.as_fields(),
                 "_meta": {"timing_ms": round(elapsed, 1)},
             }
+            metadata = {
+                "source_root": entry.get("source_root") or status.source_root,
+                "display_name": entry.get("display_name") or status.display_name,
+                "symbol_count": entry.get("symbol_count", status.symbol_count),
+                "file_count": entry.get("file_count", status.file_count),
+                "languages": entry.get("languages", status.languages),
+                "indexed_at": entry.get("indexed_at") or status.indexed_at,
+            }
+            for key, value in metadata.items():
+                if value is not None and value != "":
+                    result[key] = value
             return result
 
     # Not indexed — return the computed ID for the best candidate

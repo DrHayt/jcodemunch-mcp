@@ -4,7 +4,7 @@ import time
 from typing import Optional
 
 from ..storage import IndexStore, cost_avoided, estimate_savings, record_savings
-from ._utils import resolve_repo
+from ._utils import index_status_to_tool_error, resolve_repo
 
 
 def get_file_content(
@@ -26,7 +26,7 @@ def get_file_content(
     index = store.load_index(owner, name)
 
     if not index:
-        return {"error": f"Repository not indexed: {owner}/{name}"}
+        return index_status_to_tool_error(store.inspect_index(owner, name))
     if not index.has_source_file(file_path):
         return {"error": f"File not found: {file_path}"}
 

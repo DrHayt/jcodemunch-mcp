@@ -4,7 +4,7 @@ import time
 from typing import Optional
 
 from ..storage import IndexStore
-from ._utils import resolve_repo
+from ._utils import index_status_to_tool_error, resolve_repo
 
 
 def get_symbol_diff(
@@ -43,9 +43,9 @@ def get_symbol_diff(
     index_b = store.load_index(owner_b, name_b)
 
     if not index_a:
-        return {"error": f"Repository not indexed: {owner_a}/{name_a}"}
+        return index_status_to_tool_error(store.inspect_index(owner_a, name_a))
     if not index_b:
-        return {"error": f"Repository not indexed: {owner_b}/{name_b}"}
+        return index_status_to_tool_error(store.inspect_index(owner_b, name_b))
 
     # Build lookup maps keyed by (name, kind) — using the first match when dupes exist
     def _sym_map(index) -> dict[tuple, dict]:

@@ -1,7 +1,10 @@
 """Tests for get_file_tree language labeling behavior."""
 
+import sqlite3
+
 from jcodemunch_mcp.parser import Symbol
 from jcodemunch_mcp.storage import IndexStore
+from jcodemunch_mcp.storage.sqlite_store import _cache_evict
 from jcodemunch_mcp.tools.get_file_tree import get_file_tree
 
 
@@ -98,6 +101,48 @@ def _make_index_with_n_files(tmp_path, owner, name, n):
         languages={"python": n},
     )
     return source_files
+
+
+def test_get_file_tree_reports_unloadable_index_actionably(tmp_path):
+    """Unloadable indexes should return remediation details, not a generic miss."""
+    _make_index_with_n_files(tmp_path, "tree", "broken", 1)
+    store = IndexStore(base_path=str(tmp_path))
+    db_path = store._sqlite._db_path("tree", "broken")
+    conn = sqlite3.connect(str(db_path))
+    try:
+        conn.execute("DELETE FROM meta")
+        conn.commit()
+    finally:
+        conn.close()
+    _cache_evict("tree", "broken")
+
+    result = get_file_tree("tree/broken", storage_path=str(tmp_path))
+
+    assert result["error"] != "Repository not indexed: tree/broken"
+    assert result["load_error"] == "sqlite_missing_meta"
+    assert result["status"] == "sqlite_missing_meta"
+    assert "Re-index" in result["hint"]
+
+
+def test_get_file_tree_reports_corrupt_index_version_actionably(tmp_path):
+    """Fatal corrupt SQLite metadata should return remediation details, not raise."""
+    _make_index_with_n_files(tmp_path, "tree", "corrupt", 1)
+    store = IndexStore(base_path=str(tmp_path))
+    db_path = store._sqlite._db_path("tree", "corrupt")
+    conn = sqlite3.connect(str(db_path))
+    try:
+        conn.execute("UPDATE meta SET value = ? WHERE key = ?", ("not-an-int", "index_version"))
+        conn.commit()
+    finally:
+        conn.close()
+    _cache_evict("tree", "corrupt")
+
+    result = get_file_tree("tree/corrupt", storage_path=str(tmp_path))
+
+    assert result["error"] != "Repository not indexed: tree/corrupt"
+    assert result["load_error"] == "sqlite_corrupt"
+    assert result["status"] == "sqlite_corrupt"
+    assert "Re-index" in result["hint"]
 
 
 class TestGetFileTreeTruncation:

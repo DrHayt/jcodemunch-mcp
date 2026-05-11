@@ -2,9 +2,11 @@
 
 import pytest
 import json
+import sqlite3
 from pathlib import Path
 
 from jcodemunch_mcp.storage import IndexStore, CodeIndex
+from jcodemunch_mcp.storage.sqlite_store import _cache_evict
 from jcodemunch_mcp.parser import Symbol
 
 
@@ -135,6 +137,67 @@ def test_list_repos_includes_optional_metadata(tmp_path):
     repos = store.list_repos()
     assert repos[0]["display_name"] == "demo"
     assert repos[0]["source_root"] == "/tmp/demo"
+
+
+def test_list_repos_marks_unloadable_sqlite_repo_and_preserves_sort(tmp_path):
+    """A damaged SQLite repo remains listed with loadability diagnostics."""
+    store = IndexStore(base_path=str(tmp_path))
+
+    for name in ["broken", "healthy"]:
+        store.save_index(
+            owner="local",
+            name=name,
+            source_files=["main.py"],
+            symbols=[],
+            raw_files={"main.py": ""},
+            languages={"python": 1},
+        )
+
+    db_path = store._sqlite._db_path("local", "broken")
+    conn = sqlite3.connect(str(db_path))
+    try:
+        conn.execute("DELETE FROM meta")
+        conn.commit()
+    finally:
+        conn.close()
+    _cache_evict("local", "broken")
+
+    repos = store.list_repos()
+    repo_ids = [entry["repo"] for entry in repos]
+
+    assert repo_ids == sorted(repo_ids)
+    assert repo_ids == ["local/broken", "local/healthy"]
+
+    broken = repos[0]
+    assert broken["loadable"] is False
+    assert broken["status"] == "sqlite_missing_meta"
+    assert broken["load_error"] == "sqlite_missing_meta"
+    assert "Re-index" in broken["hint"]
+
+
+def test_list_repos_marks_corrupt_sqlite_db_and_preserves_sort(tmp_path):
+    """IndexStore.list_repos keeps corrupt DB files visible with diagnostics."""
+    store = IndexStore(base_path=str(tmp_path))
+    store.save_index(
+        owner="local",
+        name="healthy",
+        source_files=["main.py"],
+        symbols=[],
+        raw_files={"main.py": ""},
+        languages={"python": 1},
+    )
+    (tmp_path / "local-corrupt-db.db").write_text("not a sqlite database", encoding="utf-8")
+
+    repos = store.list_repos()
+    repo_ids = [entry["repo"] for entry in repos]
+
+    assert repo_ids == sorted(repo_ids)
+    assert repo_ids == ["local/corrupt-db", "local/healthy"]
+    corrupt = repos[0]
+    assert corrupt["loadable"] is False
+    assert corrupt["status"] == "sqlite_corrupt"
+    assert corrupt["load_error"] == "sqlite_corrupt"
+    assert "Re-index" in corrupt["hint"]
 
 
 def test_delete_index(tmp_path):

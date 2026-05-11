@@ -5,7 +5,7 @@ import time
 from typing import Optional
 
 from .. import config as _config
-from ._utils import resolve_repo
+from ._utils import index_status_to_tool_error, resolve_repo
 from ..storage.index_store import IndexStore
 from ..storage.token_tracker import estimate_savings, record_savings, cost_avoided
 
@@ -62,7 +62,7 @@ def search_columns(
     index = store.load_index(owner, name)
 
     if not index:
-        return {"error": f"Repository not indexed: {owner}/{name}"}
+        return index_status_to_tool_error(store.inspect_index(owner, name))
 
     # Collect column metadata from all providers
     column_sources = _collect_all_columns(index.context_metadata)

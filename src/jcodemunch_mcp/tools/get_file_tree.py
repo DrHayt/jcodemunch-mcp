@@ -7,7 +7,7 @@ from typing import Optional
 
 from .. import config as _config
 from ..storage import IndexStore, record_savings, estimate_savings, cost_avoided
-from ._utils import resolve_repo
+from ._utils import load_repo_index_or_error
 
 # Fallback used only when config is not yet loaded (e.g. tests that bypass main()).
 _DEFAULT_MAX_FILES = 500
@@ -42,17 +42,10 @@ def get_file_tree(
         max_files = _config.get("file_tree_max_files", _DEFAULT_MAX_FILES)
     max_files = max(1, max_files)  # guard against 0 or negative
 
-    try:
-        owner, name = resolve_repo(repo, storage_path)
-    except ValueError as e:
-        return {"error": str(e)}
-
-    # Load index
-    store = IndexStore(base_path=storage_path)
-    index = store.load_index(owner, name)
-
-    if not index:
-        return {"error": f"Repository not indexed: {owner}/{name}"}
+    index, error, _status = load_repo_index_or_error(repo, storage_path)
+    if error:
+        return error
+    owner, name = index.owner, index.name
 
     # Filter files by prefix
     all_files = [f for f in index.source_files if f.startswith(path_prefix)]

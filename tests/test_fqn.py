@@ -181,4 +181,4 @@ class TestResolveFqnIntegration:
     def test_repo_not_found(self):
         resolved, err = resolve_fqn("nonexistent/repo", "App\\Models\\User")
         assert resolved is None
-        assert "not indexed" in err.lower()
+        assert "not loadable" in err.lower()

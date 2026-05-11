@@ -6,7 +6,7 @@ import time
 from typing import Optional
 
 from ..storage import IndexStore, record_savings, estimate_savings, cost_avoided as _cost_avoided
-from ._utils import resolve_repo, resolve_fqn
+from ._utils import index_status_to_tool_error, resolve_repo, resolve_fqn
 
 
 def _make_meta(timing_ms: float, **kwargs) -> dict:
@@ -62,7 +62,7 @@ def get_symbol_source(
     index = store.load_index(owner, name)
 
     if not index:
-        return {"error": f"Repository not indexed: {owner}/{name}"}
+        return index_status_to_tool_error(store.inspect_index(owner, name))
 
     symbols_out = []
     errors_out = []
