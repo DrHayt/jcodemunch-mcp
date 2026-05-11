@@ -2,6 +2,80 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.107.0] — 2026-05-11 — Claude Agent Skill bundle
+
+Emits a `.claude/skills/jcodemunch/SKILL.md` bundle in the Claude Agent
+Skill format. Claude loads the skill on demand for code-navigation tasks
+instead of carrying the equivalent guidance in baseline context every
+turn — saving tokens on every session that doesn't actually need the
+detailed decision tree.
+
+### What this adds
+
+- `jcm install <agent> --skills` emits the skill bundle alongside the
+  existing CLAUDE.md preamble, MCP config, and hooks. `--skills-scope
+  global` (default) writes to `~/.claude/skills/jcodemunch/`;
+  `--skills-scope project` writes to `./.claude/skills/jcodemunch/`.
+- `jcm uninstall` removes the skill bundle by default. `--keep-skills`
+  preserves it. Uninstall is symmetric: removes the SKILL.md, then the
+  `jcodemunch/` and `.claude/skills/` parent directories if empty
+  (preserving sibling skills authored by the user).
+- `jcm install-status` reports skill presence per scope (`global` +
+  `project`) with `[x]` / `[ ]` markers, plus JSON via `--json`.
+
+### Skill content
+
+YAML frontmatter (`name: jcodemunch`, on-demand description) followed by
+a tool-usage decision tree:
+
+- When to load / when not to load the skill
+- Opening-move sequence (`resolve_repo` → `plan_turn` → obey confidence)
+- Reading code (outline → symbol → context bundle → file content)
+- Relationships (which tool answers which question)
+- Task orchestration via `assemble_task_context` (6 intents)
+- Anti-patterns (avoid Read-Grep-Glob chains on indexed repos)
+- After-editing hygiene (`register_edit` if hooks aren't installed)
+- Multi-process awareness (v1.106.0 `watcher_holder` semantics)
+- Tier model + `model=` parameter convention
+- Full tool reference (intentionally a restatement of the preamble
+  content so the skill stands alone when loaded)
+
+Body is tier-aware: the same `_filter_policy_for_tools` filter used by
+CLAUDE.md strips references to disabled tools.
+
+### Composes with existing onboarding
+
+- Always-on policy (CLAUDE.md preamble) keeps its role — short, terse,
+  loaded every turn.
+- On-demand skill is longer, more procedural, loaded only when relevant.
+- Both share the same source content + tier filter, so they never drift.
+
+### Tests
+
+16 new tests in `tests/test_skills.py` covering: YAML frontmatter shape,
+marker detection, global + project scope install, idempotent re-install,
+user-authored-SKILL preservation on uninstall, empty-parent-dir cleanup,
+sibling-skill preservation, dry-run no-write, and a full round-trip
+through `run_init` + `run_uninstall`. Full suite: 4309 passed, 7 skipped.
+
+### Dogfooded across a real CLI flow
+
+`jcm install claude-desktop --skills` against an isolated tmp HOME wrote
+the SKILL.md (171 lines, 11 h2 sections, 10 tool references); status
+correctly reported `present: true`; uninstall removed SKILL.md and both
+parent directories cleanly. Initial dogfood caught a bug — the .bak file
+created by the backup helper was being written inside the same directory
+we were trying to rmdir, preventing cleanup. Fixed by making backup a
+no-op in `uninstall_claude_skill` (skill content is regenerable from
+template; backup has no real safety value on the way out). Re-dogfood
+verified all three cleanup checks pass.
+
+### Install symmetry
+
+`jcm install --skills` adds skill; `jcm uninstall` removes it (matched
+default). `--keep-skills` lets you uninstall everything else while
+keeping the skill. `--skills-scope` chooses global vs project on install.
+
 ## [1.106.0] — 2026-05-11 — multi-process shared-index coordination
 
 Multiple MCP-server processes (Claude Code + Cursor + Codex on the same repo)

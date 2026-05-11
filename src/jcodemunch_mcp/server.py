@@ -6305,6 +6305,15 @@ def main(argv: Optional[list[str]] = None):
         help="With --status: emit JSON instead of pretty-printed output",
     )
     install_parser.add_argument(
+        "--skills", action="store_true", dest="skills",
+        help="Also emit the jcodemunch Claude Agent Skill bundle (.claude/skills/jcodemunch/SKILL.md)",
+    )
+    install_parser.add_argument(
+        "--skills-scope", choices=["global", "project"], default="global",
+        dest="skills_scope",
+        help="Where to write the skill (default: global = ~/.claude/skills/jcodemunch/)",
+    )
+    install_parser.add_argument(
         "--dry-run", action="store_true", dest="dry_run",
         help="Show what would happen without making changes",
     )
@@ -6358,6 +6367,10 @@ def main(argv: Optional[list[str]] = None):
     uninstall_parser.add_argument(
         "--keep-copilot-hooks", action="store_true", dest="keep_copilot_hooks",
         help="Preserve the Copilot postToolUse hook in .github/hooks/hooks.json",
+    )
+    uninstall_parser.add_argument(
+        "--keep-skills", action="store_true", dest="keep_skills",
+        help="Preserve the jcodemunch Claude Agent Skill bundle (~/.claude/skills/jcodemunch/)",
     )
     uninstall_parser.add_argument(
         "--dry-run", action="store_true", dest="dry_run",
@@ -6753,6 +6766,8 @@ def main(argv: Optional[list[str]] = None):
             demo=False,
             yes=True,
             no_backup=getattr(args, "no_backup", False),
+            skills=getattr(args, "skills", False),
+            skills_scope=getattr(args, "skills_scope", "global"),
         ))
 
     if args.command == "install-status":
@@ -6770,6 +6785,7 @@ def main(argv: Optional[list[str]] = None):
             agents_md=not getattr(args, "keep_agents_md", False),
             hooks=not getattr(args, "keep_hooks", False),
             copilot_hooks=not getattr(args, "keep_copilot_hooks", False),
+            skills=not getattr(args, "keep_skills", False),
             dry_run=getattr(args, "dry_run", False),
             no_backup=getattr(args, "no_backup", False),
             yes=getattr(args, "yes", False),

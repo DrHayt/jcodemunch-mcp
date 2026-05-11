@@ -877,6 +877,8 @@ def run_init(
     demo: bool = False,
     yes: bool = False,
     no_backup: bool = False,
+    skills: bool = False,
+    skills_scope: str = "global",
 ) -> int:
     """Run the init flow. Returns exit code (0 = success)."""
     if demo:
@@ -994,6 +996,20 @@ def run_init(
             _demo_actions.append((
                 "Create AGENTS.md with Code Exploration Policy",
                 "OpenCode, Codex, and other AGENTS.md-reading agents would prefer jCodemunch tools over built-in search",
+            ))
+
+    # ----- Step 2e: Claude Agent Skill bundle (opt-in via --skills) -----
+    if skills:
+        from .skills import install_claude_skill
+        msg = install_claude_skill(
+            scope=skills_scope, dry_run=dry_run, backup=backup,
+        )
+        print(f"  Claude Skill ({skills_scope}):{msg}")
+        if demo and "would" in msg:
+            where = "globally" if skills_scope == "global" else "in this project"
+            _demo_actions.append((
+                f"Write .claude/skills/jcodemunch/SKILL.md {where}",
+                "Claude loads the skill on demand for code-navigation tasks instead of carrying the policy block in baseline context every turn",
             ))
 
     # ----- Step 3: Agent hooks -----
@@ -1395,6 +1411,7 @@ def run_uninstall(
     agents_md: bool = True,
     hooks: bool = True,
     copilot_hooks: bool = True,
+    skills: bool = True,
     claude_md_scope: str = "global",
     dry_run: bool = False,
     no_backup: bool = False,
@@ -1460,6 +1477,12 @@ def run_uninstall(
     if copilot_hooks and not scoped_to_one:
         msg = uninstall_copilot_hooks(dry_run=dry_run, backup=backup)
         print(f"  Copilot hooks:{msg}")
+
+    if skills and not scoped_to_one:
+        from .skills import uninstall_claude_skill
+        for scope in ("global", "project"):
+            msg = uninstall_claude_skill(scope=scope, dry_run=dry_run, backup=backup)
+            print(f"  Claude Skill ({scope}):{msg}")
 
     print()
     if dry_run:
@@ -1558,6 +1581,13 @@ def install_status() -> dict[str, Any]:
         "present": copilot_present,
     }
 
+    # Claude Agent Skill bundle (v1.107.0) — per-scope presence
+    from .skills import skill_status as _skill_status
+    report["skills"] = {
+        "global": _skill_status("global"),
+        "project": _skill_status("project"),
+    }
+
     return report
 
 
@@ -1591,6 +1621,13 @@ def print_status(report: Optional[dict[str, Any]] = None, *, as_json: bool = Fal
     cp = report["hooks"]["copilot"]
     flag = "[x]" if cp["present"] else "[ ]"
     print(f"  {flag} Copilot hooks  ({cp['path']})")
+
+    if "skills" in report:
+        print("\nClaude Agent Skill (v1.107.0):")
+        for scope in ("global", "project"):
+            info = report["skills"].get(scope, {})
+            flag = "[x]" if info.get("present") else "[ ]"
+            print(f"  {flag} {scope}  ({info.get('path', '')})")
     print()
 
 

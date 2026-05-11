@@ -1,9 +1,9 @@
 # jcodemunch-mcp — Project Brief
 
 ## Current State
-- **Version:** 1.106.0 (multi-process shared-index coordination — atomic O_EXCL + Unix flock + PID liveness shared across watcher + indexwrite scopes; surfaces holder identity in `get_watch_status` for multi-agent workflows)
+- **Version:** 1.107.0 (Claude Agent Skill bundle — `jcm install <agent> --skills` emits `.claude/skills/jcodemunch/SKILL.md` with YAML frontmatter and a tier-aware tool-usage decision tree; loads on demand instead of always-on baseline context)
 - **INDEX_VERSION:** 16
-- **Tests:** 4293 passed, 7 skipped (1.106.0)
+- **Tests:** 4309 passed, 7 skipped (1.107.0)
 - **Python:** >=3.10
 
 ## Key Files
@@ -17,7 +17,8 @@ src/jcodemunch_mcp/
   config.py            # JSONC config: global + per-project layering, env var fallback, language/tool gating
   agent_selector.py    # Complexity scoring + model routing (off/manual/auto); default provider batting orders
   cli/
-    init.py            # `jcodemunch-mcp init` — one-command onboarding (client detection, config patching, CLAUDE.md, Cursor rules, Windsurf rules, hooks); --demo flag
+    init.py            # `jcodemunch-mcp init` — one-command onboarding (client detection, config patching, CLAUDE.md, Cursor rules, Windsurf rules, hooks); --demo flag. v1.105.1: `install <agent>` / `uninstall` / `install-status` verbs. v1.107.0: `--skills` flag on install, skills block in install_status report
+    skills.py          # v1.107.0: Claude Agent Skill bundle writer. _build_skill_content() composes YAML frontmatter + tier-filtered tool-usage decision tree. install_claude_skill / uninstall_claude_skill / skill_status. Lives at ~/.claude/skills/jcodemunch/SKILL.md (global) or ./.claude/skills/jcodemunch/SKILL.md (project). Reuses _filter_policy_for_tools from init.py for tier awareness
     hooks.py           # PreToolUse (Read interceptor) + PostToolUse (auto-reindex) + PreCompact (session snapshot) + TaskCompleted (post-task diagnostics) + SubagentStart (repo briefing) hook handlers for Claude Code
   groq/
     cli.py             # `gcm` CLI entrypoint — codebase Q&A (single question + --chat mode)
@@ -116,8 +117,8 @@ src/jcodemunch_mcp/
 |------------|---------|
 | `serve` (default) | Run the MCP server (`stdio`, `sse`, or `streamable-http`) |
 | `init` | Interactive one-command onboarding: detect MCP clients, write config, install CLAUDE.md policy, hooks, index |
-| `install <agent>` | (v1.105.1) Per-agent shortcut over `init`; targets: `claude-code`, `claude-desktop`, `cursor`, `windsurf`, `continue`, `all`. `install --list` enumerates; `install --status` reports state (JSON via `--json`) |
-| `install-status` | (v1.105.1) Read-only report of which clients / policies / hooks currently have jcodemunch wired; `--json` for scripting |
+| `install <agent>` | (v1.105.1) Per-agent shortcut over `init`; targets: `claude-code`, `claude-desktop`, `cursor`, `windsurf`, `continue`, `all`. `install --list` enumerates; `install --status` reports state (JSON via `--json`). **v1.107.0:** `--skills` also emits the Claude Agent Skill bundle (`~/.claude/skills/jcodemunch/SKILL.md` by default; `--skills-scope project` for project-local) |
+| `install-status` | (v1.105.1) Read-only report of which clients / policies / hooks currently have jcodemunch wired; `--json` for scripting. **v1.107.0:** also reports `skills.global.present` and `skills.project.present` |
 | `uninstall [target]` | (v1.105.1) Reverse `init` / `install`. Preserves user-authored hook rules and content outside our policy region; removes files only when empty after stripping. `--keep-claude-md`, `--keep-hooks`, etc. scope what's reversed |
 | `watch <paths>` | File watcher — auto-reindex on change |
 | `watch-claude` | Auto-discover and watch Claude Code worktrees |
