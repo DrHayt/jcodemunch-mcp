@@ -1,9 +1,9 @@
 # jcodemunch-mcp — Project Brief
 
 ## Current State
-- **Version:** 1.105.1 (install / uninstall / install-status CLI verbs — per-agent shortcut shape + actual uninstall path closing the only real cymbal-installer gap)
+- **Version:** 1.106.0 (multi-process shared-index coordination — atomic O_EXCL + Unix flock + PID liveness shared across watcher + indexwrite scopes; surfaces holder identity in `get_watch_status` for multi-agent workflows; closes SocratiCode's proper-lockfile gap)
 - **INDEX_VERSION:** 16
-- **Tests:** 4270 passed, 7 skipped (1.105.1)
+- **Tests:** 4293 passed, 7 skipped (1.106.0)
 - **Python:** >=3.10
 
 ## Key Files
@@ -37,7 +37,8 @@ src/jcodemunch_mcp/
     decoder.py           # Public decode() — rehydrates MUNCH payloads back to dicts
     schemas/             # Per-tool custom encoders (tier-1, phase 2+); auto-discovered registry
   storage/
-    sqlite_store.py    # CodeIndex, save/load/incremental_save, WAL-aware LRU cache (_db_mtime_ns); get_source_root()
+    sqlite_store.py    # CodeIndex, save/load/incremental_save, WAL-aware LRU cache (_db_mtime_ns); get_source_root(). v1.106.0: save_index + migrate_from_json acquire `indexwrite` process_locks before SQLite writes, body extracted to `_save_index_locked` / `_migrate_from_json_locked`; serialises across MCP processes
+    process_locks.py   # v1.106.0: generic multi-process coordination (acquire/release/inspect/held). Atomic O_EXCL + fcntl flock (Unix) + PID liveness + scoped lock files. Scopes: `watcher` (one-watcher-per-repo, shared with watcher.py) + `indexwrite` (save coordination). Metadata: pid/client_id/scope/target/started_at. JCODEMUNCH_CLIENT_ID env var sets friendly client name (defaults to sys.argv[0] basename)
   embeddings/
     local_encoder.py   # Bundled ONNX local encoder (all-MiniLM-L6-v2, 384-dim); WordPiece tokenizer, encode_batch(), download_model()
   enrichment/
@@ -186,6 +187,7 @@ Tree-sitter grammar lacks clean named fields for these — custom regex extracto
 | `JCODEMUNCH_RUNTIME_REDACT` | 1 | (Phase 0) Set 0 to disable PII redaction at the runtime trace ingest chokepoint. Off ONLY for offline debugging on synthetic data — never on production traces. |
 | `JCODEMUNCH_RUNTIME_INGEST_ENABLED` | 0 | (Phase 6) Set 1 to enable the HTTP live-ingest endpoints (POST /runtime/otel, /runtime/sql, /runtime/stack). Requires JCODEMUNCH_HTTP_TOKEN. Off by default — write endpoints are a deliberate two-key turn. |
 | `JCODEMUNCH_RUNTIME_INGEST_MAX_BODY_BYTES` | 5242880 | (Phase 6) Per-request body cap in bytes (post-decompression). Decompressed size is checked separately from on-wire size — gzip-bomb guard. Minimum 1024. |
+| `JCODEMUNCH_CLIENT_ID` | basename(`sys.argv[0]`) | (v1.106.0) Friendly client name recorded in `process_locks` metadata. Auto-detected for common runtimes (claude, cursor, codex). Override for custom or wrapper runtimes so `get_watch_status.watcher_holder.client_id` surfaces a meaningful name to other processes. |
 | `ANTHROPIC_API_KEY` | — | Enables Claude Haiku summaries (`pip install jcodemunch-mcp[anthropic]`) |
 | `GOOGLE_API_KEY` | — | Enables Gemini Flash summaries (`pip install jcodemunch-mcp[gemini]`) |
 | `OPENAI_API_BASE` | — | Local LLM endpoint (Ollama, LM Studio) |

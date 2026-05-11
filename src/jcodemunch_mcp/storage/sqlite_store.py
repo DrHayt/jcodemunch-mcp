@@ -1076,9 +1076,17 @@ class SQLiteIndexStore:
         git_root: str = "",
         source_roots: Optional[list[str]] = None,
     ) -> "CodeIndex":
-        """Save a full index to SQLite. Replaces all existing data."""
+        """Save a full index to SQLite. Replaces all existing data.
+
+        v1.106.0: serialises against concurrent save_index calls from other
+        MCP processes via the ``indexwrite`` lock. SQLite WAL alone makes
+        single-process writes safe, but two processes both rebuilding the
+        same .db can interleave DELETE/INSERT batches and corrupt the index.
+        Waits up to 60s for a parallel writer to finish; raises if longer.
+        """
         _ensure_index_store_deps()
         from .index_store import CodeIndex
+        from . import process_locks
 
         normalized_source_files = sorted(dict.fromkeys(source_files or list(raw_files.keys())))
 
@@ -1134,6 +1142,44 @@ class SQLiteIndexStore:
         )
 
         db_path = self._db_path(owner, name)
+        lock_target = f"{owner}/{name}"
+        storage_root = str(self.base_path)
+        with process_locks.held(
+            "indexwrite", lock_target, storage_root, wait_seconds=60.0
+        ) as got_lock:
+            if not got_lock:
+                detail = process_locks.current_holder_diagnostic(
+                    "indexwrite", lock_target, storage_root,
+                )
+                raise RuntimeError(
+                    f"Could not acquire index-write lock for {lock_target} "
+                    f"after 60s{detail}"
+                )
+            return self._save_index_locked(
+                owner, name, db_path, index, symbols,
+                normalized_source_files, raw_files,
+                file_hashes, file_languages, file_mtimes,
+                file_blob_shas, file_summaries, file_sizes, imports,
+            )
+
+    def _save_index_locked(
+        self,
+        owner: str,
+        name: str,
+        db_path,
+        index,
+        symbols,
+        normalized_source_files,
+        raw_files,
+        file_hashes,
+        file_languages,
+        file_mtimes,
+        file_blob_shas,
+        file_summaries,
+        file_sizes,
+        imports,
+    ):
+        """Inner body of save_index; runs under the indexwrite lock."""
         conn = self._connect(db_path)
         try:
             conn.execute("BEGIN")
@@ -2289,8 +2335,14 @@ class SQLiteIndexStore:
     # ── Migration ───────────────────────────────────────────────────
 
     def migrate_from_json(self, json_path: Path, owner: str, name: str) -> Optional["CodeIndex"]:
-        """Read a JSON index file and populate the SQLite database."""
+        """Read a JSON index file and populate the SQLite database.
+
+        v1.106.0: serialises against concurrent save_index / migrate_from_json
+        for the same repo via the ``indexwrite`` lock.
+        """
         _ensure_index_store_deps()
+        from . import process_locks
+
         if not json_path.exists():
             return None
 
@@ -2330,7 +2382,40 @@ class SQLiteIndexStore:
         has_imports_key = "imports" in data
         stored_imports = data.get("imports") if has_imports_key else None
 
-        # Populate SQLite from JSON data
+        # Populate SQLite from JSON data — serialised via indexwrite lock so
+        # we don't race a concurrent save_index from another process.
+        lock_target = f"{owner}/{name}"
+        storage_root = str(self.base_path)
+        with process_locks.held(
+            "indexwrite", lock_target, storage_root, wait_seconds=60.0,
+        ) as got_lock:
+            if not got_lock:
+                detail = process_locks.current_holder_diagnostic(
+                    "indexwrite", lock_target, storage_root,
+                )
+                raise RuntimeError(
+                    f"Could not acquire index-write lock to migrate {lock_target} "
+                    f"after 60s{detail}"
+                )
+            return self._migrate_from_json_locked(
+                json_path, owner, name, data, source_files, symbols,
+                merged_fl, computed_languages, has_imports_key, stored_imports,
+            )
+
+    def _migrate_from_json_locked(
+        self,
+        json_path: "Path",
+        owner: str,
+        name: str,
+        data: dict,
+        source_files: list,
+        symbols: list,
+        merged_fl: dict,
+        computed_languages: dict,
+        has_imports_key: bool,
+        stored_imports,
+    ) -> Optional["CodeIndex"]:
+        """Inner body of migrate_from_json; runs under the indexwrite lock."""
         db_path = self._db_path(owner, name)
         conn = self._connect(db_path)
         try:

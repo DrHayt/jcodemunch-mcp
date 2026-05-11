@@ -25,6 +25,7 @@ from .reindex_state import (
     mark_reindex_failed,
 )
 from .storage import IndexStore
+from .storage import process_locks
 from .path_map import parse_path_map, remap
 
 logger = logging.getLogger(__name__)
@@ -61,6 +62,13 @@ def _watcher_output(msg: str, *, quiet: bool, log_file_handle: Optional[IO] = No
 # Lock file helpers
 # ---------------------------------------------------------------------------
 
+# v1.106.0: lock primitives moved to storage.process_locks so save_index and
+# other write paths can share the same scheme. These thin wrappers preserve
+# the original watcher-only API surface so existing callers/tests keep working.
+
+_WATCHER_SCOPE = "watcher"
+
+
 def _lock_dir(storage_path: Optional[str]) -> Path:
     """Return the directory for lock files, creating it if needed."""
     if storage_path:
@@ -73,157 +81,27 @@ def _lock_dir(storage_path: Optional[str]) -> Path:
 
 def _folder_hash(folder_path: str) -> str:
     """Return SHA-256 hash (first 12 hex chars) of a normalized folder path."""
-    resolved = str(Path(folder_path).resolve())
-    if sys.platform == "win32":
-        resolved = resolved.lower()
-    return hashlib.sha256(resolved.encode()).hexdigest()[:12]
+    return process_locks._path_hash(folder_path)
 
 
 def _lock_path(folder_path: str, storage_path: Optional[str]) -> Path:
     """Return the lock file Path for a given folder."""
-    return _lock_dir(storage_path) / f"_watcher_{_folder_hash(folder_path)}.lock"
+    return process_locks.lock_path(_WATCHER_SCOPE, folder_path, storage_path)
 
 
 def _is_pid_alive(pid: int) -> bool:
     """Return True if a process with the given PID is running."""
-    if sys.platform == "win32":
-        import ctypes
-
-        class _BOOL(ctypes.Structure):
-            _fields_ = [("value", ctypes.c_int)]
-
-        kernel32 = ctypes.windll.kernel32
-        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
-        handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
-        if handle == 0:
-            return False
-        try:
-            kernel32.CloseHandle(handle)
-            return True
-        except OSError:
-            return False
-    else:
-        try:
-            os.kill(pid, 0)
-            return True
-        except (OSError, ProcessLookupError):
-            return False
+    return process_locks._is_pid_alive(pid)
 
 
 def _acquire_lock(folder_path: str, storage_path: Optional[str]) -> bool:
-    """
-    Attempt to acquire an exclusive lock for the given folder.
-
-    Uses O_EXCL for atomic file creation, eliminating the TOCTOU race window
-    that exists when checking lock existence before writing. On Unix, also
-    uses fcntl.flock() for OS-level advisory locking.
-
-    Returns True if the lock was acquired, False if another watcher
-    is already running (active PID).
-    """
-    lock_fp = _lock_path(folder_path, storage_path)
-
-    data = {
-        "pid": os.getpid(),
-        "folder": folder_path,
-        "started_at": datetime.now(timezone.utc).isoformat(),
-    }
-    data_bytes = json.dumps(data).encode("utf-8")
-
-    def _try_atomic_create() -> bool:
-        """Attempt atomic lock file creation using O_EXCL. Returns True on success."""
-        try:
-            fd = os.open(str(lock_fp), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
-            try:
-                os.write(fd, data_bytes)
-            finally:
-                os.close(fd)
-            return True
-        except FileExistsError:
-            return False
-        except OSError:
-            return False
-
-    # Step 1: Try atomic creation (fast path - no pre-check)
-    if _try_atomic_create():
-        # Success - apply OS-level flock on Unix
-        if fcntl is not None:
-            fd = os.open(str(lock_fp), os.O_RDWR)
-            try:
-                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except OSError:
-                os.close(fd)
-                # Race: another process grabbed the lock between create and flock
-                # (should be rare on Unix). Clean up our file.
-                try:
-                    lock_fp.unlink()
-                except OSError:
-                    pass
-                return False
-            _lock_fds[folder_path] = fd
-        return True
-
-    # Step 2: Lock file exists - check if it's stale or active
-    try:
-        data = json.loads(lock_fp.read_text(encoding="utf-8"))
-        pid = data.get("pid")
-        if pid is None:
-            logger.info("Removing stale lock for %s (no pid key)", folder_path)
-        elif _is_pid_alive(pid):
-            logger.info("Watcher already running for %s (PID %s)", folder_path, pid)
-            return False
-        else:
-            logger.info("Removing stale lock for %s (PID %s is dead)", folder_path, pid)
-    except (json.JSONDecodeError, OSError):
-        logger.info("Removing corrupted lock for %s", folder_path)
-
-    # Step 3: Clean up stale lock and retry
-    try:
-        lock_fp.unlink()
-    except OSError:
-        # Couldn't delete (locked by another process on Windows, or race).
-        # Proceed to retry anyway - O_EXCL will handle it.
-        pass
-
-    time.sleep(0.05)  # Brief pause to reduce collision window
-
-    if _try_atomic_create():
-        # Success on retry
-        if fcntl is not None:
-            fd = os.open(str(lock_fp), os.O_RDWR)
-            try:
-                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except OSError:
-                os.close(fd)
-                try:
-                    lock_fp.unlink()
-                except OSError:
-                    pass
-                return False
-            _lock_fds[folder_path] = fd
-        return True
-
-    # Step 4: Still can't create - either another process won the race, or
-    # the OS is holding the file locked (Windows). Give up gracefully.
-    logger.warning("Could not acquire lock for %s", folder_path)
-    return False
+    """Attempt to acquire an exclusive watcher-slot lock for the given folder."""
+    return process_locks.acquire(_WATCHER_SCOPE, folder_path, storage_path)
 
 
 def _release_lock(folder_path: str, storage_path: Optional[str]) -> None:
-    """Release and remove the lock for the given folder."""
-    # Release flock on Unix
-    if folder_path in _lock_fds:
-        try:
-            os.close(_lock_fds[folder_path])
-        except OSError:
-            pass
-        del _lock_fds[folder_path]
-
-    # Delete lock file
-    try:
-        _lock_path(folder_path, storage_path).unlink()
-    except OSError:
-        pass
+    """Release and remove the watcher-slot lock for the given folder."""
+    process_locks.release(_WATCHER_SCOPE, folder_path, storage_path)
 
 
 # ---------------------------------------------------------------------------

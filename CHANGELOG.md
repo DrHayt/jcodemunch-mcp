@@ -2,6 +2,90 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.106.0] — 2026-05-11 — multi-process shared-index coordination
+
+Multiple MCP-server processes (Claude Code + Cursor + Codex on the same repo)
+can now safely share one on-disk index. Closes the most legitimate
+differentiator SocratiCode had over us: their `proper-lockfile`-based
+multi-agent shared index.
+
+### What this fixes
+
+- Two MCP servers both auto-indexing the same repo on startup used to race
+  the SQLite write block — interleaved DELETE/INSERT batches could corrupt
+  the index. Now serialised: second writer waits up to 60s for the first to
+  finish, then proceeds.
+- Two watchers on the same repo from different processes used to fight over
+  reindex storms on every file change. The watcher slot was already mutex
+  (since well before v1.106.0 — `_acquire_lock` in `watcher.py`); v1.106.0
+  promotes it to a generic primitive shared with the new index-write lock,
+  enriches the metadata, and surfaces holder identity to agents.
+- `get_watch_status` now reports `watched_by_another_process` per repo plus
+  `watcher_holder` = `{pid, client_id, started_at, age_seconds}` so agents
+  understand the parallel session and don't misread the idle watcher as a
+  bug.
+
+### F-15 differentiation vs. SocratiCode's `proper-lockfile`
+
+| Capability | SocratiCode | jcm v1.106.0 |
+|---|---|---|
+| OS-level file locking | ✅ | ✅ atomic O_EXCL + fcntl flock (Unix) |
+| Stale-lock recovery | PID-based | PID-based (auto-released on process exit; OS-level on Unix) |
+| Lock metadata visible cross-process | n/a | sidecar JSON: pid, hostname, client_id, scope, target, started_at |
+| Lock scopes | single | two: `watcher` (one-watcher-per-repo) + `indexwrite` (save coordination) |
+| Status reporting | "active (watched by another process)" | full holder identity via `get_watch_status.watcher_holder` |
+| Wait-and-retry | n/a | `wait_seconds` on the context manager (indexwrite waits 60s; watcher fails fast) |
+| Client identification | n/a | `JCODEMUNCH_CLIENT_ID` env var (defaults to `sys.argv[0]` basename) |
+
+### Implementation
+
+- `src/jcodemunch_mcp/storage/process_locks.py` (new, ~280 lines): generic
+  `acquire(scope, target, storage_path)` / `release` / `inspect` /
+  `held` (context manager with `wait_seconds`) / `current_holder_diagnostic`.
+  Preserves the atomic-O_EXCL + Unix-flock + PID-liveness semantics of the
+  original watcher lock; adds `client_id` + scope-aware metadata.
+- `src/jcodemunch_mcp/watcher.py`: replaced the inline lock helpers with
+  thin wrappers calling `process_locks` under the existing public API
+  (`_acquire_lock`, `_release_lock`, `_lock_path`, `_folder_hash`,
+  `_is_pid_alive`). Existing callers unaffected. Schema: `"folder"` field
+  renamed `"target"` (lock files are now generic across scopes).
+- `src/jcodemunch_mcp/storage/sqlite_store.py`:
+  - `save_index` now wraps its write block in `process_locks.held("indexwrite", f"{owner}/{name}", ..., wait_seconds=60)`. Body extracted to `_save_index_locked` for clarity. Raises `RuntimeError` with holder diagnostic if 60s elapses without acquire.
+  - `migrate_from_json` gets the same treatment via `_migrate_from_json_locked`.
+- `src/jcodemunch_mcp/tools/get_watch_status.py`: reads `process_locks.inspect("watcher", folder)` per repo, surfaces `watched_by_another_process` + `watcher_holder` fields.
+
+### Tests
+
+- 23 new tests in `tests/test_process_locks.py` covering scope/target
+  independence, holder metadata, stale-lock recovery, corrupt-metadata
+  handling, `held()` wait-and-retry behavior, `LockHolder.age_seconds`,
+  `current_holder_diagnostic`, and an integration test that proves
+  `save_index` raises with the correct diagnostic when the lock is held.
+- 1 test in `tests/test_watcher_lock.py` updated for the renamed
+  `target` field (was `folder`).
+
+### Dogfooded across real OS processes
+
+Two real Python processes calling `save_index` on the same repo at the same
+moment via `multiprocessing.Barrier`: both succeed, second-writer elapsed
+time is ~500ms longer than first (the wait), final index loads clean with
+all 20 source files. Two real processes contending for the same watcher
+slot: first acquires, second is rejected and sees the first's identity
+(pid, client_id="dogfood-claude-code") via `process_locks.inspect`.
+
+### Migration
+
+None required. Existing code paths work unchanged. The lock file schema
+field `folder` → `target` is internal to the implementation and not
+documented as an API surface.
+
+### Env vars
+
+- `JCODEMUNCH_CLIENT_ID`: friendly name for this process in lock metadata.
+  Defaults to the basename of `sys.argv[0]` (so `claude`, `cursor`, `codex`
+  show up automatically when those binaries exec our entry point). Override
+  for custom runtimes.
+
 ## [1.105.1] — 2026-05-10 — `install` / `uninstall` / `install-status` CLI verbs
 
 UX polish over the existing `init` machinery. Three new top-level CLI verbs that

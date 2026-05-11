@@ -113,8 +113,11 @@ class TestAcquireReleaseLock:
         assert lp.exists()
         data = json.loads(lp.read_text(encoding="utf-8"))
         assert data["pid"] == os.getpid()
-        assert data["folder"] == str(folder)
+        # v1.106.0: schema field renamed `folder` → `target` (generic across lock scopes).
+        assert data["target"] == str(folder)
+        assert data["scope"] == "watcher"
         assert "started_at" in data
+        assert data["client_id"]  # populated from JCODEMUNCH_CLIENT_ID or sys.argv[0]
 
     def test_acquire_blocks_duplicate(self, tmp_path):
         folder = _make_folder(tmp_path)
