@@ -6274,6 +6274,104 @@ def main(argv: Optional[list[str]] = None):
         help="Skip creating .bak backups of modified files",
     )
 
+    # --- install (per-agent sugar over init) ---
+    install_parser = subparsers.add_parser(
+        "install",
+        help="Per-agent install shortcut. `install claude-code` is sugar for `init --client claude-code --yes`.",
+    )
+    install_parser.add_argument(
+        "target",
+        nargs="?",
+        default=None,
+        help="Agent target: claude-code, claude-desktop, cursor, windsurf, continue, all. "
+             "Omit with --list/--status for info-only output.",
+    )
+    install_parser.add_argument(
+        "--list",
+        action="store_true",
+        dest="list_targets",
+        help="List valid install targets and exit",
+    )
+    install_parser.add_argument(
+        "--status",
+        action="store_true",
+        dest="status",
+        help="Print current install state across every target",
+    )
+    install_parser.add_argument(
+        "--json",
+        action="store_true",
+        dest="as_json",
+        help="With --status: emit JSON instead of pretty-printed output",
+    )
+    install_parser.add_argument(
+        "--dry-run", action="store_true", dest="dry_run",
+        help="Show what would happen without making changes",
+    )
+    install_parser.add_argument(
+        "--no-backup", action="store_true", dest="no_backup",
+        help="Skip creating .bak backups of modified files",
+    )
+
+    # --- install-status (top-level read-only inspector) ---
+    status_parser = subparsers.add_parser(
+        "install-status",
+        help="Print current install state (clients, policies, hooks).",
+    )
+    status_parser.add_argument(
+        "--json", action="store_true", dest="as_json",
+        help="Emit JSON instead of pretty-printed output",
+    )
+
+    # --- uninstall ---
+    uninstall_parser = subparsers.add_parser(
+        "uninstall",
+        help="Reverse `init` / `install`: remove jcodemunch entries from configs, policies, and hooks.",
+    )
+    uninstall_parser.add_argument(
+        "target",
+        nargs="?",
+        default=None,
+        help="Agent target to uninstall (claude-code, claude-desktop, cursor, windsurf, continue, all). "
+             "Omit to uninstall every detected target plus shared policies and hooks.",
+    )
+    uninstall_parser.add_argument(
+        "--keep-claude-md", action="store_true", dest="keep_claude_md",
+        help="Preserve the CLAUDE.md policy block (do not strip it)",
+    )
+    uninstall_parser.add_argument(
+        "--keep-cursor-rules", action="store_true", dest="keep_cursor_rules",
+        help="Preserve .cursor/rules/jcodemunch.mdc",
+    )
+    uninstall_parser.add_argument(
+        "--keep-windsurf-rules", action="store_true", dest="keep_windsurf_rules",
+        help="Preserve the .windsurfrules policy block",
+    )
+    uninstall_parser.add_argument(
+        "--keep-agents-md", action="store_true", dest="keep_agents_md",
+        help="Preserve the AGENTS.md policy block",
+    )
+    uninstall_parser.add_argument(
+        "--keep-hooks", action="store_true", dest="keep_hooks",
+        help="Preserve jcodemunch hooks in ~/.claude/settings.json",
+    )
+    uninstall_parser.add_argument(
+        "--keep-copilot-hooks", action="store_true", dest="keep_copilot_hooks",
+        help="Preserve the Copilot postToolUse hook in .github/hooks/hooks.json",
+    )
+    uninstall_parser.add_argument(
+        "--dry-run", action="store_true", dest="dry_run",
+        help="Show what would happen without making changes",
+    )
+    uninstall_parser.add_argument(
+        "--no-backup", action="store_true", dest="no_backup",
+        help="Skip creating .bak backups of modified files",
+    )
+    uninstall_parser.add_argument(
+        "--yes", "-y", action="store_true",
+        help="Accept all defaults non-interactively",
+    )
+
     # --- hook-event ---
     hook_parser = subparsers.add_parser(
         "hook-event",
@@ -6558,7 +6656,7 @@ def main(argv: Optional[list[str]] = None):
     if any(arg in top_level_flags for arg in raw_argv):
         args = parser.parse_args(raw_argv)
     else:
-        known_commands = {"serve", "watch", "hook-event", "hook-pretooluse", "hook-posttooluse", "hook-copilot-posttooluse", "hook-precompact", "hook-taskcomplete", "hook-subagent-start", "watch-claude", "watch-all", "watch-install", "watch-uninstall", "watch-status", "config", "index", "index-file", "import-trace", "claude-md", "init", "install-pack", "download-model", "upgrade", "whatsnew", "receipt", "digest", "health", "file-risk", "observatory"}
+        known_commands = {"serve", "watch", "hook-event", "hook-pretooluse", "hook-posttooluse", "hook-copilot-posttooluse", "hook-precompact", "hook-taskcomplete", "hook-subagent-start", "watch-claude", "watch-all", "watch-install", "watch-uninstall", "watch-status", "config", "index", "index-file", "import-trace", "claude-md", "init", "install", "install-status", "uninstall", "install-pack", "download-model", "upgrade", "whatsnew", "receipt", "digest", "health", "file-risk", "observatory"}
         # MCP-tool-name typos: route to the right CLI verb with a friendly hint.
         # `index_repo` and `index_folder` are MCP tools, not CLI subcommands.
         _CLI_ALIASES = {
@@ -6612,6 +6710,69 @@ def main(argv: Optional[list[str]] = None):
             demo=args.demo,
             yes=args.yes,
             no_backup=args.no_backup,
+        ))
+
+    if args.command == "install":
+        from .cli.init import (
+            list_targets as _list_targets,
+            install_status as _install_status,
+            print_status as _print_status,
+            run_init,
+            _AGENT_ALIASES,
+        )
+        if getattr(args, "list_targets", False):
+            _list_targets()
+            sys.exit(0)
+        if getattr(args, "status", False):
+            _print_status(_install_status(), as_json=getattr(args, "as_json", False))
+            sys.exit(0)
+        target = args.target
+        if not target:
+            print(
+                "install: please pass a target (e.g. `install claude-code`),\n"
+                "        or use --list / --status for info-only output.",
+                file=sys.stderr,
+            )
+            sys.exit(2)
+        if target.lower() not in _AGENT_ALIASES:
+            print(
+                f"install: unknown target '{target}'. Valid: "
+                f"{', '.join(sorted(_AGENT_ALIASES))}",
+                file=sys.stderr,
+            )
+            sys.exit(2)
+        client_arg = None if target.lower() == "all" else [target.lower()]
+        sys.exit(run_init(
+            clients=client_arg or ["auto"],
+            claude_md="global",
+            hooks=True,
+            copilot_hooks=False,
+            index=False,
+            audit=False,
+            dry_run=getattr(args, "dry_run", False),
+            demo=False,
+            yes=True,
+            no_backup=getattr(args, "no_backup", False),
+        ))
+
+    if args.command == "install-status":
+        from .cli.init import install_status as _install_status, print_status as _print_status
+        _print_status(_install_status(), as_json=getattr(args, "as_json", False))
+        sys.exit(0)
+
+    if args.command == "uninstall":
+        from .cli.init import run_uninstall
+        sys.exit(run_uninstall(
+            target=args.target,
+            claude_md=not getattr(args, "keep_claude_md", False),
+            cursor_rules=not getattr(args, "keep_cursor_rules", False),
+            windsurf_rules=not getattr(args, "keep_windsurf_rules", False),
+            agents_md=not getattr(args, "keep_agents_md", False),
+            hooks=not getattr(args, "keep_hooks", False),
+            copilot_hooks=not getattr(args, "keep_copilot_hooks", False),
+            dry_run=getattr(args, "dry_run", False),
+            no_backup=getattr(args, "no_backup", False),
+            yes=getattr(args, "yes", False),
         ))
 
     if args.command == "download-model":

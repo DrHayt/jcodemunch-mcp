@@ -1,9 +1,9 @@
 # jcodemunch-mcp — Project Brief
 
 ## Current State
-- **Version:** 1.105.0 (assemble_task_context: F-15 task-aware single-call orchestrator — vexp run_pipeline + code-review-graph get_minimal_context_tool parity)
+- **Version:** 1.105.1 (install / uninstall / install-status CLI verbs — per-agent shortcut shape + actual uninstall path closing the only real cymbal-installer gap)
 - **INDEX_VERSION:** 16
-- **Tests:** 4247 passed, 7 skipped (1.105.0)
+- **Tests:** 4270 passed, 7 skipped (1.105.1)
 - **Python:** >=3.10
 
 ## Key Files
@@ -114,7 +114,10 @@ src/jcodemunch_mcp/
 | Subcommand | Purpose |
 |------------|---------|
 | `serve` (default) | Run the MCP server (`stdio`, `sse`, or `streamable-http`) |
-| `init` | One-command onboarding: detect MCP clients, write config, install CLAUDE.md policy, hooks, index |
+| `init` | Interactive one-command onboarding: detect MCP clients, write config, install CLAUDE.md policy, hooks, index |
+| `install <agent>` | (v1.105.1) Per-agent shortcut over `init`; targets: `claude-code`, `claude-desktop`, `cursor`, `windsurf`, `continue`, `all`. `install --list` enumerates; `install --status` reports state (JSON via `--json`) |
+| `install-status` | (v1.105.1) Read-only report of which clients / policies / hooks currently have jcodemunch wired; `--json` for scripting |
+| `uninstall [target]` | (v1.105.1) Reverse `init` / `install`. Preserves user-authored hook rules and content outside our policy region; removes files only when empty after stripping. `--keep-claude-md`, `--keep-hooks`, etc. scope what's reversed |
 | `watch <paths>` | File watcher — auto-reindex on change |
 | `watch-claude` | Auto-discover and watch Claude Code worktrees |
 | `watch-all` | Auto-discover **every** locally-indexed repo and keep it fresh; rediscovers on interval |

@@ -2,6 +2,71 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.105.1] — 2026-05-10 — `install` / `uninstall` / `install-status` CLI verbs
+
+UX polish over the existing `init` machinery. Three new top-level CLI verbs that
+match the per-agent shape competitors like cymbal ship (`cymbal hook install
+<agent>`), without forcing users to learn the broader `init --client foo
+--claude-md global --hooks --yes` flag combo.
+
+The substance hasn't changed — `init` still does everything — but three real
+gaps got closed:
+
+- **`uninstall` actually exists now.** Previously users had to hand-edit
+  `~/.claude/settings.json`, `.cursor/rules/jcodemunch.mdc`, `CLAUDE.md`, etc.
+  to back out an `init`. The new `uninstall` verb reverses every install path,
+  preserves user-added rules (only drops entries whose command mentions
+  `jcodemunch-mcp`), and removes files only when they're empty after stripping
+  (i.e., we created them). `--keep-claude-md`, `--keep-hooks`, etc. let you
+  scope what gets reversed.
+- **`install-status`** reads the current state of every install target
+  (clients, policies, hooks) and reports `[x]` / `[ ]`. JSON output via
+  `--json` for scripting / CI.
+- **Per-agent shortcut: `install <agent>`.** `jcm install claude-desktop` is
+  sugar for `init --client claude-desktop --claude-md global --hooks --yes`.
+  `install --list` enumerates valid targets (`claude-code`, `claude-desktop`,
+  `cursor`, `windsurf`, `continue`, `all`). `install --status` mirrors
+  `install-status`.
+
+### Why this is a patch, not a minor
+
+This is wrappers + an uninstall path over existing tested code, not new
+capability. No new MCP tools. The competitive gap (cymbal's per-agent
+installer UX) was real; our underlying machinery already exceeded it.
+
+### Implementation
+
+- `src/jcodemunch_mcp/cli/init.py`: added `run_uninstall()`,
+  `install_status()`, `print_status()`, `list_targets()`,
+  `_strip_policy_blocks()` (heading-aware contiguous-block remover),
+  `_strip_jcm_hooks()`, plus per-target `uninstall_*` functions mirroring the
+  existing `install_*` set. `_AGENT_ALIASES` dict maps friendly names to
+  canonical MCPClient names.
+- `src/jcodemunch_mcp/server.py`: three new subparsers (`install`,
+  `uninstall`, `install-status`) and dispatch branches. `install <agent>`
+  routes through `run_init()` with sensible per-agent defaults.
+- 23 new tests in `tests/test_install_uninstall.py`. Covers:
+  - `_strip_policy_blocks` preserves user content before and after our region
+  - `_strip_jcm_hooks` preserves user-authored hook rules in the same event
+  - Full install → status → uninstall round-trips for CLAUDE.md, cursor rules,
+    windsurf rules, hooks, all on `tmp_path`
+  - Pre-existing file content survives a round-trip
+  - Dry-run makes no changes
+
+### Dogfooded
+
+Per `feedback_smoke_orchestrators.md`: smoke-tested the full
+`install claude-desktop` → `install-status` → `uninstall` flow against an
+isolated `tmp HOME` before tagging. Pre-state was all `[ ]`, post-install was
+the expected `[x]` set, post-uninstall returned to all `[ ]` with no orphaned
+state. User-detection on the temp HOME correctly picked up the seeded client
+config files; `claude` CLI gracefully said "not found -- skipped" since it
+wasn't on the temp PATH.
+
+### Tests
+
+4270 passed (4247 from v1.105.0 + 23 new), 7 skipped.
+
 ## [1.105.0] — 2026-05-10 — `assemble_task_context`: F-15 task-aware single-call orchestrator
 
 Closes the one ergonomic gap both vexp (`run_pipeline`) and code-review-graph

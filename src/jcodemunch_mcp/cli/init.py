@@ -1099,3 +1099,508 @@ def run_init(
         print("Done. Restart your MCP client(s) to connect.")
     print()
     return 0
+
+
+# ---------------------------------------------------------------------------
+# Uninstall — reverses every install_* function above
+# ---------------------------------------------------------------------------
+
+# Headings emitted by _CLAUDE_MD_POLICY. Used by uninstall to recognise the
+# region we own when stripping the policy back out of a CLAUDE.md / AGENTS.md /
+# .windsurfrules file.
+_POLICY_HEADINGS: tuple[str, ...] = (
+    "## Code Exploration Policy",
+    "## Session-Aware Routing",
+    "## Model-Driven Tool Tiering",
+)
+
+
+def _strip_policy_blocks(text: str) -> tuple[str, bool]:
+    """Remove the jCodemunch policy region from a markdown body.
+
+    Treats the first `## Code Exploration Policy` heading as the start of the
+    region. Consumes any of `_POLICY_HEADINGS` blocks that follow contiguously
+    (so partial / tier-filtered installs are still removed cleanly). Stops at
+    the first `## ` heading that is *not* one of ours, preserving any
+    user-added sections after the policy.
+
+    Returns (new_text, changed).
+    """
+    lines = text.splitlines(keepends=True)
+    start = None
+    for i, line in enumerate(lines):
+        stripped = line.rstrip("\n")
+        if stripped in _POLICY_HEADINGS:
+            start = i
+            break
+    if start is None:
+        return text, False
+
+    # Walk forward, consuming contiguous policy blocks.
+    end = len(lines)
+    i = start + 1
+    while i < len(lines):
+        stripped = lines[i].rstrip("\n")
+        if stripped.startswith("## "):
+            if stripped in _POLICY_HEADINGS:
+                i += 1
+                continue
+            end = i
+            break
+        i += 1
+
+    # Trim trailing blank lines we leave behind.
+    before = "".join(lines[:start]).rstrip() + ("\n" if start > 0 else "")
+    after = "".join(lines[end:])
+    new_text = before + ("\n" + after if after.strip() else "")
+    return new_text, True
+
+
+def _unpatch_mcp_config(path: Path, *, backup: bool, dry_run: bool) -> str:
+    """Remove the jcodemunch entry from an MCP client JSON config."""
+    if not path.exists():
+        return f"  no config at {path}"
+    data = _read_json(path)
+    servers = data.get("mcpServers", {})
+    if "jcodemunch" not in servers:
+        return f"  jcodemunch not present in {path}"
+    if dry_run:
+        return f"  would remove jcodemunch from {path}"
+    del servers["jcodemunch"]
+    if not servers:
+        data.pop("mcpServers", None)
+    _write_json(path, data, backup=backup)
+    return f"  removed jcodemunch from {path}"
+
+
+def _unconfigure_claude_code(*, dry_run: bool) -> str:
+    """Run `claude mcp remove jcodemunch`."""
+    if dry_run:
+        return "  would run: claude mcp remove jcodemunch"
+    try:
+        result = subprocess.run(
+            ["claude", "mcp", "remove", "jcodemunch"],
+            capture_output=True, text=True, timeout=30,
+        )
+        if result.returncode == 0:
+            return "  ran: claude mcp remove jcodemunch"
+        stderr = (result.stderr or "").strip()
+        stdout = (result.stdout or "").strip()
+        msg = stderr or stdout
+        if any(s in msg.lower() for s in ("not found", "does not exist", "no such")):
+            return "  not configured in Claude Code"
+        return f"  claude mcp remove failed: {msg}"
+    except FileNotFoundError:
+        return "  claude CLI not found -- skipped"
+    except subprocess.TimeoutExpired:
+        return "  claude mcp remove timed out"
+
+
+def unconfigure_client(client: MCPClient, *, backup: bool = True, dry_run: bool = False) -> str:
+    """Remove jcodemunch from a single MCP client. Returns a status message."""
+    if client.method == "cli":
+        return _unconfigure_claude_code(dry_run=dry_run)
+    if client.method == "json_patch" and client.config_path:
+        return _unpatch_mcp_config(client.config_path, backup=backup, dry_run=dry_run)
+    return f"  unknown method for {client.name}"
+
+
+def uninstall_claude_md(scope: str = "global", *, dry_run: bool = False, backup: bool = True) -> str:
+    path = _claude_md_path(scope)
+    if not path.exists():
+        return f"  no file at {path}"
+    text = path.read_text(encoding="utf-8")
+    new_text, changed = _strip_policy_blocks(text)
+    if not changed:
+        return f"  policy not present in {path}"
+    if dry_run:
+        return f"  would strip policy from {path}"
+    if backup:
+        shutil.copy2(path, path.with_suffix(".md.bak"))
+    if new_text.strip():
+        path.write_text(new_text, encoding="utf-8")
+        return f"  stripped policy from {path}"
+    # File is empty after stripping -- we created it; safe to remove.
+    path.unlink()
+    return f"  removed empty {path}"
+
+
+def uninstall_cursor_rules(*, dry_run: bool = False, backup: bool = True) -> str:
+    path = _cursor_rules_path()
+    if not path.exists():
+        return f"  not present at {path}"
+    if dry_run:
+        return f"  would remove {path}"
+    if backup:
+        shutil.copy2(path, path.with_suffix(".mdc.bak"))
+    path.unlink()
+    return f"  removed {path}"
+
+
+def uninstall_windsurf_rules(*, dry_run: bool = False, backup: bool = True) -> str:
+    path = _windsurf_rules_path()
+    if not path.exists():
+        return f"  no file at {path}"
+    text = path.read_text(encoding="utf-8")
+    new_text, changed = _strip_policy_blocks(text)
+    if not changed:
+        return f"  policy not present in {path}"
+    if dry_run:
+        return f"  would strip policy from {path}"
+    if backup:
+        shutil.copy2(path, path.with_suffix(".windsurfrules.bak"))
+    if new_text.strip():
+        path.write_text(new_text, encoding="utf-8")
+        return f"  stripped policy from {path}"
+    path.unlink()
+    return f"  removed empty {path}"
+
+
+def uninstall_agents_md(*, dry_run: bool = False, backup: bool = True) -> str:
+    path = Path.cwd() / "AGENTS.md"
+    if not path.exists():
+        return f"  no file at {path}"
+    text = path.read_text(encoding="utf-8")
+    new_text, changed = _strip_policy_blocks(text)
+    if not changed:
+        return f"  policy not present in {path}"
+    if dry_run:
+        return f"  would strip policy from {path}"
+    if backup:
+        shutil.copy2(path, path.with_suffix(".md.bak"))
+    if new_text.strip():
+        path.write_text(new_text, encoding="utf-8")
+        return f"  stripped policy from {path}"
+    path.unlink()
+    return f"  removed empty {path}"
+
+
+def _strip_jcm_hooks(data: dict[str, Any]) -> list[str]:
+    """Walk settings.json hooks and drop any rule whose command mentions jcodemunch-mcp.
+
+    Returns the names of events that lost rules (for status reporting).
+    Empty events and an empty top-level `hooks` key are also pruned.
+    """
+    hooks = data.get("hooks")
+    if not isinstance(hooks, dict):
+        return []
+
+    touched: list[str] = []
+    for event_name in list(hooks.keys()):
+        rules = hooks[event_name]
+        if not isinstance(rules, list):
+            continue
+        kept_rules = []
+        dropped = False
+        for rule in rules:
+            cmds = [h.get("command", "") for h in rule.get("hooks", []) if isinstance(h, dict)]
+            if any("jcodemunch-mcp" in cmd for cmd in cmds):
+                dropped = True
+                continue
+            kept_rules.append(rule)
+        if dropped:
+            touched.append(event_name)
+        if kept_rules:
+            hooks[event_name] = kept_rules
+        else:
+            del hooks[event_name]
+
+    if not hooks:
+        data.pop("hooks", None)
+    return touched
+
+
+def uninstall_hooks(*, dry_run: bool = False, backup: bool = True) -> str:
+    """Reverse install_hooks + install_enforcement_hooks (single ~/.claude/settings.json)."""
+    path = _settings_json_path()
+    if not path.exists():
+        return f"  no settings at {path}"
+    data = _read_json(path)
+    snapshot = json.dumps(data, sort_keys=True)
+    touched = _strip_jcm_hooks(data)
+    if not touched and json.dumps(data, sort_keys=True) == snapshot:
+        return f"  no jcodemunch hooks in {path}"
+    if dry_run:
+        return f"  would strip jcodemunch hooks from {', '.join(touched)} in {path}"
+    _write_json(path, data, backup=backup)
+    return f"  stripped jcodemunch hooks from {', '.join(touched)} in {path}"
+
+
+def uninstall_copilot_hooks(*, dry_run: bool = False, backup: bool = True) -> str:
+    cwd = Path.cwd()
+    hooks_path = cwd / ".github" / "hooks" / "hooks.json"
+    if not hooks_path.exists():
+        return f"  no hooks file at {hooks_path}"
+    try:
+        data = json.loads(hooks_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, ValueError, OSError):
+        return f"  failed to parse {hooks_path}; skipped"
+    hooks = data.get("hooks", {})
+    pt = hooks.get("postToolUse", [])
+    if not isinstance(pt, list):
+        return f"  unexpected shape in {hooks_path}; skipped"
+    kept = [r for r in pt if not r.get("bash", "").startswith("jcodemunch-mcp hook-copilot")]
+    if len(kept) == len(pt):
+        return f"  no jcodemunch Copilot hook in {hooks_path}"
+    if dry_run:
+        return f"  would remove jcodemunch Copilot hook from {hooks_path}"
+    if backup:
+        hooks_path.with_suffix(".json.bak").write_text(
+            hooks_path.read_text(encoding="utf-8"), encoding="utf-8"
+        )
+    if kept:
+        hooks["postToolUse"] = kept
+    else:
+        hooks.pop("postToolUse", None)
+    if not hooks:
+        data.pop("hooks", None)
+    if data == {} or data == {"version": 1}:
+        hooks_path.unlink()
+        return f"  removed empty {hooks_path}"
+    hooks_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    return f"  removed jcodemunch Copilot hook from {hooks_path}"
+
+
+# Map of friendly target names accepted by `jcm install <target>` /
+# `jcm uninstall <target>`. Values are canonical MCPClient.name strings (where
+# applicable). `all` is a sentinel meaning "every detected client".
+_AGENT_ALIASES: dict[str, str] = {
+    "claude-code": "Claude Code",
+    "claude-desktop": "Claude Desktop",
+    "cursor": "Cursor",
+    "windsurf": "Windsurf",
+    "continue": "Continue",
+    "all": "__all__",
+}
+
+
+def _resolve_target_client(target: str, detected: list[MCPClient]) -> Optional[MCPClient]:
+    canonical = _AGENT_ALIASES.get(target.lower())
+    if canonical is None:
+        return None
+    if canonical == "__all__":
+        return None
+    for c in detected:
+        if c.name == canonical:
+            return c
+    return None
+
+
+def run_uninstall(
+    *,
+    target: Optional[str] = None,
+    claude_md: bool = True,
+    cursor_rules: bool = True,
+    windsurf_rules: bool = True,
+    agents_md: bool = True,
+    hooks: bool = True,
+    copilot_hooks: bool = True,
+    claude_md_scope: str = "global",
+    dry_run: bool = False,
+    no_backup: bool = False,
+    yes: bool = False,
+) -> int:
+    """Reverse a prior `init` run. Returns exit code (0 = success)."""
+    backup = not no_backup
+
+    if dry_run:
+        print("\njCodeMunch uninstall -- DRY RUN (no changes will be made)\n")
+    else:
+        print("\njCodeMunch uninstall\n")
+
+    detected = _detect_clients()
+    if target and target.lower() not in _AGENT_ALIASES:
+        print(f"Unknown target: {target}")
+        print(f"Valid targets: {', '.join(sorted(_AGENT_ALIASES))}")
+        return 2
+
+    # ---- MCP client config ----
+    if target:
+        if target.lower() == "all":
+            client_targets = detected
+        else:
+            resolved = _resolve_target_client(target, detected)
+            client_targets = [resolved] if resolved else []
+            if not resolved:
+                print(f"  {target}: not detected on this machine")
+    else:
+        client_targets = detected
+
+    for client in client_targets:
+        msg = unconfigure_client(client, backup=backup, dry_run=dry_run)
+        print(f"  {client.name}:{msg}")
+
+    # When uninstalling a single client, we leave the file-system policies and
+    # hooks alone unless the caller explicitly asks otherwise. Match the
+    # symmetry of `install` which writes them only when the relevant client is
+    # selected.
+    scoped_to_one = bool(target) and target.lower() != "all"
+
+    if claude_md and (not scoped_to_one or target.lower() in {"claude-code", "claude-desktop"}):
+        for scope in ("global", "project"):
+            msg = uninstall_claude_md(scope, dry_run=dry_run, backup=backup)
+            print(f"  CLAUDE.md ({scope}):{msg}")
+
+    if cursor_rules and (not scoped_to_one or target.lower() == "cursor"):
+        msg = uninstall_cursor_rules(dry_run=dry_run, backup=backup)
+        print(f"  Cursor rules:{msg}")
+
+    if windsurf_rules and (not scoped_to_one or target.lower() == "windsurf"):
+        msg = uninstall_windsurf_rules(dry_run=dry_run, backup=backup)
+        print(f"  Windsurf rules:{msg}")
+
+    if agents_md and not scoped_to_one:
+        msg = uninstall_agents_md(dry_run=dry_run, backup=backup)
+        print(f"  AGENTS.md:{msg}")
+
+    if hooks and not scoped_to_one:
+        msg = uninstall_hooks(dry_run=dry_run, backup=backup)
+        print(f"  Hooks:{msg}")
+
+    if copilot_hooks and not scoped_to_one:
+        msg = uninstall_copilot_hooks(dry_run=dry_run, backup=backup)
+        print(f"  Copilot hooks:{msg}")
+
+    print()
+    if dry_run:
+        print("Dry run complete -- no changes were made.")
+    else:
+        print("Done.")
+    print()
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# Status — read-only inspection of current install state
+# ---------------------------------------------------------------------------
+
+def install_status() -> dict[str, Any]:
+    """Read current state of every install target.
+
+    Returns a dict with sub-blocks for clients / policies / hooks. Designed for
+    JSON consumption (CI, dashboards) and pretty-printing by `print_status`.
+    All checks are read-only.
+    """
+    report: dict[str, Any] = {
+        "clients": [],
+        "policies": {},
+        "hooks": {},
+    }
+
+    for client in _detect_clients():
+        entry: dict[str, Any] = {
+            "name": client.name,
+            "method": client.method,
+            "config_path": str(client.config_path) if client.config_path else None,
+            "configured": False,
+        }
+        if client.method == "json_patch" and client.config_path:
+            data = _read_json(client.config_path)
+            entry["configured"] = _has_jcodemunch_entry(data)
+        elif client.method == "cli":
+            try:
+                result = subprocess.run(
+                    ["claude", "mcp", "list"],
+                    capture_output=True, text=True, timeout=10,
+                )
+                entry["configured"] = (
+                    result.returncode == 0
+                    and "jcodemunch" in (result.stdout or "")
+                )
+            except (FileNotFoundError, subprocess.TimeoutExpired):
+                entry["configured"] = False
+        report["clients"].append(entry)
+
+    # File-based policies
+    for label, path in (
+        ("claude_md_global", _claude_md_path("global")),
+        ("claude_md_project", _claude_md_path("project")),
+        ("cursor_rules", _cursor_rules_path()),
+        ("windsurf_rules", _windsurf_rules_path()),
+        ("agents_md", Path.cwd() / "AGENTS.md"),
+    ):
+        report["policies"][label] = {
+            "path": str(path),
+            "present": _has_policy(path),
+        }
+
+    # Hooks in ~/.claude/settings.json
+    settings_path = _settings_json_path()
+    settings_data = _read_json(settings_path) if settings_path.exists() else {}
+    jcm_events: list[str] = []
+    for event_name, rules in (settings_data.get("hooks") or {}).items():
+        if not isinstance(rules, list):
+            continue
+        for rule in rules:
+            cmds = [h.get("command", "") for h in rule.get("hooks", []) if isinstance(h, dict)]
+            if any("jcodemunch-mcp" in cmd for cmd in cmds):
+                jcm_events.append(event_name)
+                break
+    report["hooks"]["claude_settings"] = {
+        "path": str(settings_path),
+        "events_with_jcm_rules": jcm_events,
+    }
+
+    # Copilot hooks
+    copilot_path = Path.cwd() / ".github" / "hooks" / "hooks.json"
+    copilot_present = False
+    if copilot_path.exists():
+        try:
+            cdata = json.loads(copilot_path.read_text(encoding="utf-8"))
+            for r in (cdata.get("hooks") or {}).get("postToolUse", []) or []:
+                if isinstance(r, dict) and r.get("bash", "").startswith("jcodemunch-mcp hook-copilot"):
+                    copilot_present = True
+                    break
+        except (json.JSONDecodeError, ValueError, OSError):
+            pass
+    report["hooks"]["copilot"] = {
+        "path": str(copilot_path),
+        "present": copilot_present,
+    }
+
+    return report
+
+
+def print_status(report: Optional[dict[str, Any]] = None, *, as_json: bool = False) -> None:
+    """Pretty-print install_status() or emit it as JSON."""
+    report = report if report is not None else install_status()
+    if as_json:
+        print(json.dumps(report, indent=2))
+        return
+
+    print("\njCodeMunch install status\n")
+    print("Clients:")
+    if not report["clients"]:
+        print("  (none detected)")
+    for c in report["clients"]:
+        flag = "[x]" if c["configured"] else "[ ]"
+        loc = c["config_path"] or "via CLI"
+        print(f"  {flag} {c['name']}  ({loc})")
+
+    print("\nPolicies:")
+    for label, info in report["policies"].items():
+        flag = "[x]" if info["present"] else "[ ]"
+        print(f"  {flag} {label}  ({info['path']})")
+
+    print("\nHooks:")
+    cs = report["hooks"]["claude_settings"]
+    events = cs.get("events_with_jcm_rules") or []
+    flag = "[x]" if events else "[ ]"
+    detail = ", ".join(events) if events else "no jcodemunch rules"
+    print(f"  {flag} Claude settings.json  ({detail})")
+    cp = report["hooks"]["copilot"]
+    flag = "[x]" if cp["present"] else "[ ]"
+    print(f"  {flag} Copilot hooks  ({cp['path']})")
+    print()
+
+
+def list_targets() -> None:
+    """Print the set of valid `install <target>` / `uninstall <target>` names."""
+    print("\nAvailable install targets:\n")
+    for alias in sorted(_AGENT_ALIASES):
+        if alias == "all":
+            print(f"  {alias:<16}  every detected MCP client")
+        else:
+            canonical = _AGENT_ALIASES[alias]
+            print(f"  {alias:<16}  {canonical}")
+    print()
